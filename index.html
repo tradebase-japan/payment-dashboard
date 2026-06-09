@@ -1501,13 +1501,11 @@ function calcSummary() {
   const net         = totalBal + totalIncome - totalFixed - totalCC - totalSudden;
 
   const balEl = document.getElementById('s-total-balance');
-  balEl.textContent = `¥${totalBal.toLocaleString()}`;
-  balEl.className = `text-xl font-bold ${totalBal >= 0 ? 'text-emerald-600' : 'text-gray-700'}`;
+  if (balEl) balEl.textContent = `¥${totalBal.toLocaleString()}`;
   document.getElementById('s-total-fixed').textContent   = `¥${(totalFixed + totalCC + totalSudden).toLocaleString()}`;
   document.getElementById('s-total-income').textContent  = totalIncome > 0 ? `¥${totalIncome.toLocaleString()}` : '—';
   const netEl = document.getElementById('s-net');
-  netEl.textContent = `¥${net.toLocaleString()}`;
-  netEl.className   = `text-xl font-bold ${net >= 0 ? 'text-emerald-600' : 'text-red-600'}`;
+  if (netEl) netEl.textContent = `¥${net.toLocaleString()}`;
 }
 
 // ================================================================
