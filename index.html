@@ -311,6 +311,9 @@ const CAT = {
 const deductions = [
   { id:'enecos',        name:'エネオス',   day:2,    label:null,  amount:null,   cat:'utility',   acc:'taiki-rakuten' },
   { id:'housing-loan',  name:'住宅ローン', day:7,    label:null,  amount:117575, cat:'housing',   acc:'taiki-sbi' },
+  { id:'sbi-auto-loan',    name:'SBI振込（融資返済）',          day:9,    label:null,   amount:136000, cat:'loan',      acc:'taiki-sbi' },
+  { id:'sbi-auto-nursery', name:'SBI振込（カーローン&保育園）', day:25,   label:null,   amount:62899,  cat:'car',       acc:'taiki-sbi' },
+  { id:'sbi-auto-kurai',   name:'SBI振込（クライノート）',      day:null, label:'月末', amount:11000,  cat:'other',     acc:'taiki-sbi' },
   { id:'shinkin-loan',  name:'信用金庫 融資返済', day:10,   label:null,  amount:null,   cat:'loan',      acc:'taiki-choushi-b' },
   { id:'nursery',       name:'保育園（長女）', day:20,   label:null,  amount:6650,   cat:'childcare', acc:'taiki-rakuten' },
   { id:'nursery2',      name:'保育園（次女）', day:1,    label:null,  amount:11000,  cat:'childcare', acc:'taiki-rakuten' },
@@ -397,6 +400,13 @@ const PRESET_DEPOSITS = [
   { id:'kessan-0523-trading', label:'5/23 既存事業（商社・卸売）⑤', amount:'350000', acc:'taiki-rakuten' },
   { id:'kessan-0530-trading', label:'5/30 既存事業（商社・卸売）⑥ 繰越', amount:'600000', acc:'taiki-rakuten' },
 ];
+
+// 毎月：SBIから銚子信金（個人）への自動振込受取
+{
+  const _m = new Date().getMonth() + 1;
+  PRESET_DEPOSITS.push({ id:'sbi-recv-choushi-p', label:`${_m}/25 SBI自動振込`, amount:'62899', acc:'taiki-choushi-p' });
+  PRESET_DEPOSITS.push({ id:'sbi-recv-choushi-b', label:`${_m}/9 SBI自動振込（融資返済）`, amount:'136000', acc:'taiki-choushi-b' });
+}
 
 // 偶数月のみ：児童手当（子2人・10日支給）
 if ((new Date().getMonth() + 1) % 2 === 0) {
