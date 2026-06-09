@@ -857,10 +857,6 @@ function renderAccountCards() {
             </div>
           </div>
           <div id="${cardId}-sud" class="cc-items">${suddenDetailHTML}</div>` : ''}
-          <div class="flex justify-between text-xs font-semibold pt-0.5 border-t ${theme.border}">
-            <span class="text-gray-500">月末残高見込み</span>
-            <span class="${afterBal >= 0 ? 'text-emerald-600' : 'text-red-600'}">¥${afterBal.toLocaleString()}</span>
-          </div>
         </div>
       `;
       container.appendChild(card);
