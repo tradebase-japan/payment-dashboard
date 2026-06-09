@@ -51,6 +51,15 @@
       <p class="text-gray-400 text-xs mt-0.5" id="currentDate"></p>
     </div>
     <div class="flex items-center gap-2 flex-shrink-0">
+      <!-- クラウド同期ボタン -->
+      <button onclick="openCloudSyncModal()" title="クラウド自動同期の設定"
+        id="cloud-btn"
+        class="flex items-center gap-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl px-3 py-2 transition">
+        <svg id="cloud-icon" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-4.9-6H7a4 4 0 00-4 4z"/>
+        </svg>
+        <span id="cloud-label" class="hidden sm:inline">自動同期</span>
+      </button>
       <button onclick="exportData()" title="データをエクスポート"
         class="flex items-center gap-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl px-3 py-2 transition">
         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -218,6 +227,33 @@
 <div id="sync-toast"
   class="fixed bottom-20 right-5 text-white text-xs font-medium rounded-xl px-4 py-2.5 shadow-lg opacity-0 z-50 transition-opacity duration-300"
   style="background:#10b981">
+</div>
+
+<!-- ===== クラウド同期モーダル ===== -->
+<div id="cloud-modal" class="fixed inset-0 bg-black/40 z-[100] hidden items-center justify-center p-4" onclick="if(event.target===this)closeCloudSyncModal()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-base font-bold text-gray-900">クラウド自動同期の設定</h2>
+      <button onclick="closeCloudSyncModal()" class="text-gray-400 hover:text-gray-600 transition">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <p class="text-xs text-gray-500 mb-4">GitHub Personal Access Token（PAT）を設定すると、Mac・iPhoneで自動的にデータが同期されます。</p>
+    <div class="bg-blue-50 rounded-xl p-3 mb-4 text-xs text-blue-700 leading-relaxed">
+      <b>PATの作成方法：</b><br>
+      1. <a href="https://github.com/settings/tokens/new?scopes=public_repo&description=%E6%94%AF%E6%89%95%E3%81%84%E7%AE%A1%E7%90%86%E5%90%8C%E6%9C%9F" target="_blank" class="underline font-medium">こちら</a>をタップ（GitHub → Settings → Tokens）<br>
+      2. Expiration を「No expiration」に設定<br>
+      3. 「Generate token」をクリックしてトークンをコピー
+    </div>
+    <label class="block text-xs font-medium text-gray-700 mb-1">Personal Access Token</label>
+    <input id="cloud-pat-input" type="password" placeholder="ghp_xxxxxxxxxxxx"
+      class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 mb-4">
+    <div id="cloud-pat-status" class="text-xs mb-3 hidden"></div>
+    <div class="flex gap-2">
+      <button onclick="saveCloudPAT()" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-xl py-2.5 transition">設定して同期開始</button>
+      <button onclick="clearCloudPAT()" class="text-xs text-gray-400 hover:text-red-500 px-3 transition">解除</button>
+    </div>
+  </div>
 </div>
 
 <!-- ===== 保存トースト ===== -->
@@ -427,6 +463,7 @@ function save() {
       ccData: CREDIT_CARDS.map(c => ({ id:c.id, items:c.items, acc:c.acc })),
     }));
     showSaveToast();
+    _debouncedGhSave();
   } catch(e) {
     console.warn('[支払い管理] 保存に失敗しました:', e);
   }
@@ -474,6 +511,119 @@ function load() {
   } catch(e) {
     console.warn('[支払い管理] localStorageの読み込みに失敗しました:', e);
   }
+}
+
+// ================================================================
+// クラウド自動同期（GitHub Contents API）
+// ================================================================
+
+const _GH_REPO  = 'tradebase-japan/payment-dashboard';
+const _GH_FILE  = 'sync-data.json';
+
+function _ghPAT()  { return localStorage.getItem('github-sync-pat') || ''; }
+
+function _b64enc(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
+}
+function _b64dec(b64) {
+  const bin = atob(b64.replace(/\n/g, ''));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+async function _ghGet() {
+  const pat = _ghPAT(); if (!pat) return null;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${_GH_REPO}/contents/${_GH_FILE}`, {
+      headers: { 'Authorization': `Bearer ${pat}`, 'Accept': 'application/vnd.github+json' }
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return { data: _b64dec(j.content), sha: j.sha };
+  } catch { return null; }
+}
+
+async function _ghPut(jsonStr) {
+  const pat = _ghPAT(); if (!pat) return false;
+  try {
+    _setCloudStatus('syncing');
+    const existing = await _ghGet();
+    const body = { message: 'sync', content: _b64enc(jsonStr) };
+    if (existing?.sha) body.sha = existing.sha;
+    const r = await fetch(`https://api.github.com/repos/${_GH_REPO}/contents/${_GH_FILE}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${pat}`,
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    if (r.ok) { _setCloudStatus('ok'); return true; }
+    _setCloudStatus('error'); return false;
+  } catch { _setCloudStatus('error'); return false; }
+}
+
+let _ghSaveTimer;
+function _debouncedGhSave() {
+  const pat = _ghPAT(); if (!pat) return;
+  clearTimeout(_ghSaveTimer);
+  _ghSaveTimer = setTimeout(() => {
+    const d = localStorage.getItem('shiharai-v4');
+    if (d) _ghPut(d);
+  }, 3000);
+}
+
+function _setCloudStatus(state) {
+  const btn   = document.getElementById('cloud-btn');
+  const icon  = document.getElementById('cloud-icon');
+  const label = document.getElementById('cloud-label');
+  if (!btn) return;
+  const colors = { ok:'text-blue-500', syncing:'text-yellow-500', error:'text-red-500', off:'text-gray-400' };
+  btn.className = btn.className.replace(/text-\w+-\d+/g, '').trim() + ' ' + (colors[state] || colors.off);
+  const labels = { ok:'同期済み', syncing:'同期中…', error:'同期エラー', off:'自動同期' };
+  if (label) label.textContent = labels[state] || '自動同期';
+}
+
+// モーダル制御
+function openCloudSyncModal() {
+  const modal = document.getElementById('cloud-modal');
+  const input = document.getElementById('cloud-pat-input');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  const saved = _ghPAT();
+  if (saved) { input.value = saved; }
+  input.focus();
+}
+function closeCloudSyncModal() {
+  document.getElementById('cloud-modal').classList.add('hidden');
+  document.getElementById('cloud-modal').classList.remove('flex');
+}
+async function saveCloudPAT() {
+  const input  = document.getElementById('cloud-pat-input');
+  const status = document.getElementById('cloud-pat-status');
+  const pat    = input.value.trim();
+  if (!pat) { status.textContent = '⚠️ トークンを入力してください'; status.className = 'text-xs mb-3 text-red-500'; status.classList.remove('hidden'); return; }
+  localStorage.setItem('github-sync-pat', pat);
+  status.textContent = '確認中…'; status.className = 'text-xs mb-3 text-gray-500'; status.classList.remove('hidden');
+  const d = localStorage.getItem('shiharai-v4');
+  const ok = d ? await _ghPut(d) : false;
+  if (ok) {
+    status.textContent = '✅ 同期しました！'; status.className = 'text-xs mb-3 text-emerald-600';
+    setTimeout(closeCloudSyncModal, 1200);
+  } else {
+    status.textContent = '❌ 失敗しました。トークンを確認してください。'; status.className = 'text-xs mb-3 text-red-500';
+  }
+}
+function clearCloudPAT() {
+  if (!confirm('自動同期の設定を解除しますか？')) return;
+  localStorage.removeItem('github-sync-pat');
+  document.getElementById('cloud-pat-input').value = '';
+  _setCloudStatus('off');
+  closeCloudSyncModal();
 }
 
 // ================================================================
@@ -1561,14 +1711,25 @@ const now = new Date();
 document.getElementById('currentDate').textContent =
   `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日（${'日月火水木金土'[now.getDay()]}）`;
 
-load();
-renderAccountCards();
-renderCreditCards();
-renderTimeline();
-renderFixed();
-renderDeposits();
-renderSuddenExpenses();
-calcSummary();
+(async () => {
+  // GitHubから最新データを取得してlocalStorageを上書き
+  const gh = await _ghGet();
+  if (gh?.data) {
+    try { localStorage.setItem('shiharai-v4', gh.data); } catch(e) {}
+    _setCloudStatus('ok');
+  } else if (_ghPAT()) {
+    _setCloudStatus('error');
+  }
+
+  load();
+  renderAccountCards();
+  renderCreditCards();
+  renderTimeline();
+  renderFixed();
+  renderDeposits();
+  renderSuddenExpenses();
+  calcSummary();
+})();
 </script>
 </body>
 </html>
