@@ -320,7 +320,7 @@ const deductions = [
   { id:'nursery',       name:'保育園（長女）', day:20,   label:null,  amount:6650,   cat:'childcare', acc:'taiki-rakuten' },
   { id:'nursery2',      name:'保育園（次女）', day:1,    label:null,  amount:11000,  cat:'childcare', acc:'taiki-rakuten' },
   { id:'car-loan-ded',  name:'カーローン', day:26,   label:null,  amount:51440,  cat:'car',       acc:'taiki-rakuten' },
-  { id:'loan-car-tax',  name:'融資返済（カー・税理）', day:27, label:null, amount:210000, cat:'loan', acc:'taiki-rakuten' },
+  { id:'loan-car-tax',  name:'定額自動入金', day:27, label:null, amount:210000, cat:'loan', acc:'taiki-rakuten' },
   { id:'exterior-ded',  name:'外構',       day:26,   label:null,  amount:40000,  cat:'housing',   acc:'taiki-rakuten' },
   { id:'accountant',    name:'税理士',     day:null, label:'月末', amount:11000,  cat:'other',     acc:'taiki-rakuten' },
   { id:'famipay',       name:'ファミペイ', day:27,   label:null,  amount:null,   cat:'lifestyle', acc:'wife-smbc' },
@@ -1509,7 +1509,9 @@ function calcSummary() {
   const totalSudden = suddenExpenses.reduce((s, e) => s + (parseFloat(String(e.amount||'').replace(/,/g,'')) || 0), 0);
   const net         = totalBal + totalIncome - totalFixed - totalCC - totalSudden;
 
-  document.getElementById('s-total-balance').textContent = `¥${totalBal.toLocaleString()}`;
+  const balEl = document.getElementById('s-total-balance');
+  balEl.textContent = `¥${totalBal.toLocaleString()}`;
+  balEl.className = `text-xl font-bold ${totalBal >= 0 ? 'text-emerald-600' : 'text-gray-700'}`;
   document.getElementById('s-total-fixed').textContent   = `¥${(totalFixed + totalCC + totalSudden).toLocaleString()}`;
   document.getElementById('s-total-income').textContent  = totalIncome > 0 ? `¥${totalIncome.toLocaleString()}` : '—';
   const netEl = document.getElementById('s-net');
