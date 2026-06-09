@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>支払い管理ダッシュボード</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['"Hiragino Sans"','"Hiragino Kaku Gothic ProN"','"Noto Sans JP"','sans-serif'] } } }
+    }
+  </script>
+  <style>
+    body { font-family: "Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif; }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+    /* 編集フィールド */
+    .editable { border-bottom: 2px dashed #cbd5e1; cursor: text; transition: border-color .15s; }
+    .editable:focus { outline: 2px solid #3b82f6; outline-offset: 2px; border-bottom-color: #3b82f6; border-radius: 2px; }
+
+    /* セレクト */
+    select { -webkit-appearance: none; appearance: none; }
+    .acc-select {
+      background: rgba(0,0,0,.04); border-radius: .375rem;
+      padding: 2px 8px; font-size: .7rem; cursor: pointer; border-width: 1px;
+    }
+    .acc-select:focus { outline: 2px solid #3b82f6; outline-offset: 1px; }
+
+    /* カード折りたたみ */
+    .cc-items { display: none; }
+    .cc-items.open { display: block; }
+    .chevron { transition: transform .2s; }
+    .chevron.open { transform: rotate(180deg); }
+
+    /* トースト */
+    #save-toast, #undo-toast, #sync-toast {
+      transition: opacity .25s, transform .25s;
+      pointer-events: none;
+    }
+    #save-toast.show, #undo-toast.show, #sync-toast.show { pointer-events: auto; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen pb-16">
+
+<!-- ===== HEADER ===== -->
+<div class="bg-white border-b border-gray-200 px-5 py-3.5 sticky top-0 z-50 shadow-sm">
+  <div class="max-w-5xl mx-auto flex items-center justify-between gap-3">
+    <div>
+      <h1 class="text-lg font-bold tracking-tight text-gray-900">支払い管理</h1>
+      <p class="text-gray-400 text-xs mt-0.5" id="currentDate"></p>
+    </div>
+    <button onclick="syncZaim()"
+      id="sync-btn"
+      class="flex items-center gap-1.5 text-xs font-medium bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl px-4 py-2 transition shadow-sm flex-shrink-0">
+      <svg id="sync-icon" class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+      <span id="sync-label">Zaimと同期</span>
+    </button>
+  </div>
+</div>
+
+<div class="max-w-5xl mx-auto px-4 py-5 space-y-5">
+
+  <!-- ===== 収支サマリ（最優先・最上部）===== -->
+  <section class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+    <div class="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+      <p class="text-xs text-gray-500 mb-1 font-medium">総残高</p>
+      <p class="text-xl font-bold text-emerald-600" id="s-total-balance">—</p>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+      <p class="text-xs text-gray-500 mb-1 font-medium">今月の支出合計</p>
+      <p class="text-xl font-bold text-red-500" id="s-total-fixed">—</p>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+      <p class="text-xs text-gray-500 mb-1 font-medium">入金予定合計</p>
+      <p class="text-xl font-bold text-blue-500" id="s-total-income">—</p>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+      <p class="text-xs text-gray-500 mb-1 font-medium">収支見込み</p>
+      <p class="text-xl font-bold" id="s-net">—</p>
+    </div>
+  </section>
+
+  <!-- ===== 口座残高 ===== -->
+  <section>
+    <h2 class="text-sm font-semibold text-gray-500 mb-3">口座残高</h2>
+    <div class="mb-3">
+      <p class="text-xs text-gray-400 mb-2 pl-1 font-medium">大樹</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5" id="cards-taiki"></div>
+    </div>
+    <div>
+      <p class="text-xs text-gray-400 mb-2 pl-1 font-medium">妻</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5" id="cards-wife"></div>
+    </div>
+  </section>
+
+  <!-- ===== 入金予定 ===== -->
+  <section class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+      <h2 class="text-sm font-semibold text-blue-500">↓ 入金予定</h2>
+      <div class="flex items-center gap-2">
+        <button onclick="undoDeposits()" id="deposit-undo-btn"
+          disabled
+          class="flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm
+                 bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed"
+          title="直前の変更を元に戻す">
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+          </svg>
+          元に戻す
+        </button>
+        <button onclick="sortDepositsByDate()" type="button"
+          class="flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+          title="ラベル先頭の「月/日」で昇順に並べ替え（日付なしは末尾）">
+          <svg class="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+          </svg>
+          日付順
+        </button>
+        <button onclick="syncKessan()"
+          id="kessan-btn"
+          class="flex items-center gap-1.5 text-xs font-medium bg-violet-500 hover:bg-violet-600 text-white rounded-lg px-3 py-1.5 transition shadow-sm">
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+          </svg>
+          <span id="kessan-label">決算管理から粗利を取得</span>
+        </button>
+      </div>
+    </div>
+    <div id="deposit-list" class="space-y-2"></div>
+    <button onclick="addDeposit()"
+      class="mt-3 text-xs text-blue-500 hover:text-blue-600 border border-blue-200 hover:border-blue-400 rounded-lg px-3 py-1.5 transition bg-blue-50 hover:bg-blue-100">
+      + 追加
+    </button>
+  </section>
+
+  <!-- ===== 急な支出予定 ===== -->
+  <section class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+      <h2 class="text-sm font-semibold text-orange-500">↑ 急な支出予定</h2>
+      <div class="flex items-center gap-2">
+        <button onclick="undoSuddenExpenses()" id="sudden-undo-btn"
+          disabled
+          class="flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm
+                 bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed"
+          title="直前の変更を元に戻す">
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+          </svg>
+          元に戻す
+        </button>
+        <button onclick="sortSuddenByDate()" type="button"
+          class="flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+          title="ラベル先頭の「月/日」で昇順に並べ替え">
+          <svg class="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+          </svg>
+          日付順
+        </button>
+      </div>
+    </div>
+    <div id="sudden-list" class="space-y-2"></div>
+    <button onclick="addSuddenExpense()"
+      class="mt-3 text-xs text-orange-500 hover:text-orange-600 border border-orange-200 hover:border-orange-400 rounded-lg px-3 py-1.5 transition bg-orange-50 hover:bg-orange-100">
+      + 追加
+    </button>
+  </section>
+
+  <!-- ===== クレジットカード ===== -->
+  <section class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+    <h2 class="text-base font-semibold mb-1 flex items-center gap-2 text-gray-800">
+      💳 クレジットカード
+    </h2>
+    <p class="text-xs text-gray-400 mb-4">明細を手動入力 → 引き落とし口座の残高に自動反映</p>
+    <div id="cc-list" class="space-y-3"></div>
+  </section>
+
+  <!-- ===== 引き落としスケジュール ===== -->
+  <section class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+    <h2 class="text-base font-semibold mb-4 flex items-center gap-2 text-gray-800">
+      <span class="text-red-500 text-sm">●</span> 引き落としスケジュール
+    </h2>
+    <div class="relative">
+      <div class="absolute left-[4.2rem] top-0 bottom-0 w-px bg-gray-200"></div>
+      <div id="timeline" class="space-y-0.5"></div>
+    </div>
+  </section>
+
+  <!-- ===== 固定費一覧 ===== -->
+  <section class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+    <h2 class="text-base font-semibold mb-4 text-gray-800">📋 固定費一覧</h2>
+    <div id="fixed-list" class="divide-y divide-gray-100"></div>
+  </section>
+
+</div>
+
+<!-- ===== Zaim同期トースト ===== -->
+<div id="sync-toast"
+  class="fixed bottom-20 right-5 text-white text-xs font-medium rounded-xl px-4 py-2.5 shadow-lg opacity-0 z-50 transition-opacity duration-300"
+  style="background:#10b981">
+</div>
+
+<!-- ===== 保存トースト ===== -->
+<div id="save-toast"
+  class="fixed bottom-5 right-5 bg-emerald-500 text-white text-xs font-medium rounded-xl px-4 py-2.5 shadow-lg opacity-0 z-50 flex items-center gap-1.5">
+  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+  </svg>
+  保存しました
+</div>
+
+<!-- ===== 削除UNDOトースト ===== -->
+<div id="undo-toast"
+  class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm rounded-xl px-4 py-3 shadow-xl opacity-0 z-50 flex items-center gap-4 whitespace-nowrap">
+  <span id="undo-msg"></span>
+  <button onclick="execUndo()"
+    class="text-blue-400 hover:text-blue-300 font-semibold text-xs border border-blue-700 rounded-lg px-2.5 py-1 transition">
+    元に戻す
+  </button>
+</div>
+
+<script>
+// ================================================================
+// マスタデータ（全項目にIDを付与）
+// ================================================================
+
+const ACCOUNTS = [
+  { id:'taiki-rakuten',   owner:'taiki', name:'楽天',            label:'大樹・楽天',
+    c:{ bg:'bg-red-50',    border:'border-red-200',    text:'text-red-700',    dot:'bg-red-500',    sel:'border-red-300 text-red-700',    selBg:'rgba(254,242,242,1)' } },
+  { id:'taiki-sbi',       owner:'taiki', name:'住信SBI',         label:'大樹・住信SBI',
+    c:{ bg:'bg-blue-50',   border:'border-blue-200',   text:'text-blue-700',   dot:'bg-blue-500',   sel:'border-blue-300 text-blue-700',   selBg:'rgba(239,246,255,1)' } },
+  { id:'taiki-choushi-p', owner:'taiki', name:'銚子信金（個人）', label:'大樹・銚子（個人）',
+    c:{ bg:'bg-amber-50',  border:'border-amber-200',  text:'text-amber-700',  dot:'bg-amber-500',  sel:'border-amber-300 text-amber-700',  selBg:'rgba(255,251,235,1)' } },
+  { id:'taiki-choushi-b', owner:'taiki', name:'銚子信金（事業）', label:'大樹・銚子（事業）',
+    c:{ bg:'bg-violet-50', border:'border-violet-200', text:'text-violet-700', dot:'bg-violet-500', sel:'border-violet-300 text-violet-700', selBg:'rgba(245,243,255,1)' } },
+  { id:'wife-rakuten',    owner:'wife',  name:'楽天',            label:'妻・楽天',
+    c:{ bg:'bg-pink-50',   border:'border-pink-200',   text:'text-pink-700',   dot:'bg-pink-500',   sel:'border-pink-300 text-pink-700',   selBg:'rgba(253,242,248,1)' } },
+  { id:'wife-smbc',       owner:'wife',  name:'三井住友',        label:'妻・三井住友',
+    c:{ bg:'bg-emerald-50',border:'border-emerald-200',text:'text-emerald-700',dot:'bg-emerald-500',sel:'border-emerald-300 text-emerald-700',selBg:'rgba(236,253,245,1)' } },
+  { id:'cash',            owner:'other', name:'現金',            label:'現金',
+    c:{ bg:'bg-green-50',  border:'border-green-200',  text:'text-green-700',  dot:'bg-green-500',  sel:'border-green-300 text-green-700',  selBg:'rgba(240,253,244,1)' } },
+  { id:'cc-rakuten',      owner:'card',  name:'楽天カード',      label:'💳 楽天カード',
+    c:{ bg:'bg-red-50',    border:'border-red-200',    text:'text-red-700',    dot:'bg-red-400',    sel:'border-red-300 text-red-700',    selBg:'rgba(254,242,242,1)' } },
+  { id:'cc-smbc',         owner:'card',  name:'三井住友カード',  label:'💳 三井住友カード',
+    c:{ bg:'bg-emerald-50',border:'border-emerald-200',text:'text-emerald-700',dot:'bg-emerald-500', sel:'border-emerald-300 text-emerald-700', selBg:'rgba(236,253,245,1)' } },
+  { id:'cc-amex',         owner:'card',  name:'Amex Gold（大樹）', label:'💳 Amex Gold（大樹）',
+    c:{ bg:'bg-amber-50',  border:'border-amber-200',  text:'text-amber-700',  dot:'bg-amber-500',  sel:'border-amber-300 text-amber-700',  selBg:'rgba(255,251,235,1)' } },
+  { id:'cc-wife-rakuten', owner:'card',  name:'楽天カード（妻）', label:'💳 楽天カード（妻）',
+    c:{ bg:'bg-pink-50',   border:'border-pink-200',   text:'text-pink-700',   dot:'bg-pink-400',   sel:'border-pink-300 text-pink-700',   selBg:'rgba(253,242,248,1)' } },
+  { id:'cc-wife-amex',    owner:'card',  name:'Amex Gold（妻）', label:'💳 Amex Gold（妻）',
+    c:{ bg:'bg-rose-50',   border:'border-rose-200',   text:'text-rose-700',   dot:'bg-rose-500',   sel:'border-rose-300 text-rose-700',   selBg:'rgba(255,241,242,1)' } },
+];
+
+const CAT = {
+  housing:      { bg:'bg-sky-50',    border:'border-sky-200',    text:'text-sky-700',    dot:'bg-sky-500',    tag:'住居' },
+  insurance:    { bg:'bg-purple-50', border:'border-purple-200', text:'text-purple-700', dot:'bg-purple-500', tag:'保険' },
+  car:          { bg:'bg-orange-50', border:'border-orange-200', text:'text-orange-700', dot:'bg-orange-500', tag:'車' },
+  childcare:    { bg:'bg-pink-50',   border:'border-pink-200',   text:'text-pink-700',   dot:'bg-pink-500',   tag:'保育' },
+  utility:      { bg:'bg-cyan-50',   border:'border-cyan-200',   text:'text-cyan-700',   dot:'bg-cyan-500',   tag:'光熱・通信' },
+  subscription: { bg:'bg-teal-50',   border:'border-teal-200',   text:'text-teal-700',   dot:'bg-teal-500',   tag:'サブスク' },
+  lifestyle:    { bg:'bg-yellow-50', border:'border-yellow-200', text:'text-yellow-700', dot:'bg-yellow-500', tag:'生活' },
+  loan:         { bg:'bg-red-50',    border:'border-red-200',    text:'text-red-700',    dot:'bg-red-500',    tag:'ローン' },
+  food:         { bg:'bg-lime-50',   border:'border-lime-200',   text:'text-lime-700',   dot:'bg-lime-500',   tag:'食費' },
+  shopping:     { bg:'bg-indigo-50', border:'border-indigo-200', text:'text-indigo-700', dot:'bg-indigo-500', tag:'買物' },
+  other:        { bg:'bg-gray-50',   border:'border-gray-200',   text:'text-gray-600',   dot:'bg-gray-400',   tag:'その他' },
+};
+
+// 引き落とし（IDベース）
+const deductions = [
+  { id:'enecos',        name:'エネオス',   day:2,    label:null,  amount:null,   cat:'utility',   acc:'taiki-rakuten' },
+  { id:'housing-loan',  name:'住宅ローン', day:7,    label:null,  amount:117575, cat:'housing',   acc:'taiki-sbi' },
+  { id:'shinkin-loan',  name:'信用金庫 融資返済', day:10,   label:null,  amount:null,   cat:'loan',      acc:'taiki-choushi-b' },
+  { id:'nursery',       name:'保育園（長女）', day:20,   label:null,  amount:6650,   cat:'childcare', acc:'taiki-rakuten' },
+  { id:'nursery2',      name:'保育園（次女）', day:20,   label:null,  amount:11000,  cat:'childcare', acc:'taiki-rakuten' },
+  { id:'car-loan-ded',  name:'カーローン', day:26,   label:null,  amount:51440,  cat:'car',       acc:'taiki-rakuten' },
+  { id:'exterior-ded',  name:'外構',       day:26,   label:null,  amount:40000,  cat:'housing',   acc:'taiki-rakuten' },
+  { id:'accountant',    name:'税理士',     day:null, label:'月末', amount:11000,  cat:'other',     acc:'taiki-rakuten' },
+  { id:'famipay',       name:'ファミペイ', day:27,   label:null,  amount:null,   cat:'lifestyle', acc:'wife-smbc' },
+];
+
+// 固定費（IDベース）payType: 'bank' | 'credit' | 'cash'
+const fixed = [
+  // 銀行引き落とし
+  { id:'housing-fix',      name:'住居費',              amount:118000, cat:'housing',      acc:'taiki-sbi',      payType:'bank' },
+  { id:'health-ins-fix',   name:'健康保険',            amount:29230,  cat:'insurance',    acc:'taiki-rakuten',  payType:'bank' },
+  { id:'life-ins',         name:'生命保険',            amount:3640,   cat:'insurance',    acc:'taiki-rakuten',  payType:'credit' },
+  { id:'childcare',        name:'保育費',              amount:17650,  cat:'childcare',    acc:'taiki-rakuten',  payType:'bank' },
+  { id:'car-loan-fix',     name:'カーローン',          amount:51440,  cat:'car',          acc:'taiki-rakuten',  payType:'bank' },
+  { id:'exterior-fix',     name:'外構',                amount:40000,  cat:'housing',      acc:'taiki-rakuten',  payType:'bank' },
+  { id:'loan-repay',       name:'融資返済',            amount:null,   cat:'loan',         acc:'taiki-rakuten',  payType:'bank' },
+  // クレジット引き落とし
+  { id:'youtube',          name:'YouTube Premium',     amount:1280,   cat:'subscription', acc:'taiki-rakuten',  payType:'credit' },
+  { id:'amazon',           name:'Amazon Prime（年払）', amount:5900,   cat:'subscription', acc:'taiki-rakuten',  payType:'credit' },
+  { id:'telecom',          name:'通信費',              amount:5478,   cat:'utility',      acc:'taiki-rakuten',  payType:'credit' },
+  { id:'hachiemon',        name:'八右衛門',            amount:10000,  cat:'lifestyle',    acc:'taiki-rakuten',  payType:'credit' },
+  { id:'personal',         name:'パーソナル',          amount:40000,  cat:'lifestyle',    acc:'taiki-rakuten',  payType:'credit' },
+  { id:'overseas-maker',   name:'海外メーカー',        amount:53000,  cat:'shopping',     acc:'taiki-rakuten',  payType:'credit' },
+  // 現金
+  { id:'gymnastics',       name:'長女 体操',           amount:6000,   cat:'childcare',    acc:'cash',           payType:'cash' },
+  { id:'dance',            name:'長女 ダンス',         amount:4000,   cat:'childcare',    acc:'cash',           payType:'cash' },
+];
+
+const CREDIT_CARDS = [
+  {
+    id:'cc-rakuten', name:'楽天カード', closingDay:31, billingDay:27, acc:'taiki-rakuten', items:[],
+    theme:{ bg:'bg-red-50', border:'border-red-200', text:'text-red-700', dot:'bg-red-500',
+            headerBg:'bg-red-50', itemBorder:'border-red-100' }
+  },
+  {
+    id:'cc-smbc', name:'三井住友カード', closingDay:31, billingDay:26, acc:'taiki-rakuten', items:[],
+    theme:{ bg:'bg-green-50', border:'border-green-200', text:'text-green-700', dot:'bg-green-500',
+            headerBg:'bg-green-50', itemBorder:'border-green-100' }
+  },
+  {
+    id:'cc-amex', name:'Amex Gold（大樹）', closingDay:2, billingDay:21, acc:'taiki-rakuten', items:[],
+    theme:{ bg:'bg-amber-50', border:'border-amber-200', text:'text-amber-700', dot:'bg-amber-500',
+            headerBg:'bg-amber-50', itemBorder:'border-amber-100' }
+  },
+  {
+    id:'cc-wife-rakuten', name:'楽天カード（妻）', closingDay:31, billingDay:27, acc:'wife-rakuten', items:[],
+    theme:{ bg:'bg-pink-50', border:'border-pink-200', text:'text-pink-700', dot:'bg-pink-500',
+            headerBg:'bg-pink-50', itemBorder:'border-pink-100' }
+  },
+  {
+    id:'cc-wife-amex', name:'Amex Gold（妻）', closingDay:2, billingDay:21, acc:'wife-rakuten', items:[],
+    theme:{ bg:'bg-rose-50', border:'border-rose-200', text:'text-rose-700', dot:'bg-rose-500',
+            headerBg:'bg-rose-50', itemBorder:'border-rose-100' }
+  },
+];
+
+const balances = {};
+ACCOUNTS.forEach(a => { balances[a.id] = 0; });
+
+let deposits = [{ id:1, label:'給与（大樹）', amount:'', acc:'taiki-rakuten' }];
+
+let suddenExpenses = [];
+
+// ユーザーが明示的に削除したプリセットIDのセット（再マージ防止）
+let deletedPresetIds = new Set();
+
+// コードで追加したプリセット入金（IDで重複チェックしてマージ）
+const PRESET_DEPOSITS = [
+  // 買取入金
+  { id:'buy-142464788429',    label:'5/11 買取入金',            amount:'490800',  acc:'taiki-rakuten' },
+  { id:'buy-142813041593',    label:'5/13 買取入金',            amount:'53200',   acc:'taiki-rakuten' },
+  { id:'buy-111775705216',    label:'5/13 買取入金',            amount:'1034350', acc:'taiki-rakuten' },
+  { id:'buy-111938225320',    label:'5/13 買取入金',            amount:'522100',  acc:'taiki-rakuten' },
+  // 決算管理（既存事業・商社/卸売）
+  { id:'kessan-0507-trading', label:'5/7 既存事業（商社・卸売）④',  amount:'350000', acc:'taiki-rakuten' },
+  { id:'kessan-0508-trading', label:'5/8 既存事業（商社・卸売）③ 繰越', amount:'350000', acc:'taiki-rakuten' },
+  { id:'kessan-0511-trading', label:'5/11 既存事業（商社・卸売）④ 繰越', amount:'400000', acc:'taiki-rakuten' },
+  { id:'kessan-0521-trading', label:'5/21 既存事業（商社・卸売）⑥', amount:'600000', acc:'taiki-rakuten' },
+  { id:'kessan-0522-trading', label:'5/22 既存事業（商社・卸売）',   amount:'125000', acc:'taiki-rakuten' },
+  { id:'kessan-0523-trading', label:'5/23 既存事業（商社・卸売）⑤', amount:'350000', acc:'taiki-rakuten' },
+  { id:'kessan-0530-trading', label:'5/30 既存事業（商社・卸売）⑥ 繰越', amount:'600000', acc:'taiki-rakuten' },
+];
+
+// 偶数月のみ：児童手当（子2人・10日支給）
+if ((new Date().getMonth() + 1) % 2 === 0) {
+  PRESET_DEPOSITS.push({ id:'jido-teate', label:'児童手当（10日）', amount:'50000', acc:'taiki-rakuten' });
+}
+
+// ================================================================
+// ユーティリティ
+// ================================================================
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function numFmt(n) {
+  return (n != null && n !== '') ? parseInt(n, 10).toLocaleString() : '';
+}
+
+// テキスト入力をカンマ付きに整形しつつ生の数値文字列を返す
+function numInput(el) {
+  const raw = el.value.replace(/[^0-9]/g, '');
+  const n   = raw === '' ? null : parseInt(raw, 10);
+  const pos = el.selectionEnd;
+  const oldLen = el.value.length;
+  el.value = n != null ? n.toLocaleString() : '';
+  const diff = el.value.length - oldLen;
+  try { el.setSelectionRange(pos + diff, pos + diff); } catch(_) {}
+  return raw;
+}
+
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+}
+
+// ================================================================
+// LocalStorage（IDベース保存 v4）
+// ================================================================
+
+function save() {
+  try {
+    localStorage.setItem('shiharai-v4', JSON.stringify({
+      balances,
+      deductions: deductions.map(d => ({ id:d.id, amount:d.amount, acc:d.acc })),
+      fixed:      fixed.map(f      => ({ id:f.id, amount:f.amount, acc:f.acc })),
+      deposits,
+      suddenExpenses,
+      deletedPresetIds: [...deletedPresetIds],
+      ccData: CREDIT_CARDS.map(c => ({ id:c.id, items:c.items, acc:c.acc })),
+    }));
+    showSaveToast();
+  } catch(e) {
+    console.warn('[支払い管理] 保存に失敗しました:', e);
+  }
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem('shiharai-v4');
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (saved.balances) Object.assign(balances, saved.balances);
+    if (saved.deductions) saved.deductions.forEach(s => {
+      const item = deductions.find(d => d.id === s.id);
+      if (item) { item.amount = s.amount; item.acc = s.acc; }
+    });
+    if (saved.fixed) saved.fixed.forEach(s => {
+      const item = fixed.find(f => f.id === s.id);
+      if (item) { item.amount = s.amount; item.acc = s.acc; }
+    });
+    // 削除済みプリセットIDを先にロード
+    if (saved.deletedPresetIds) deletedPresetIds = new Set(saved.deletedPresetIds);
+
+    if (saved.deposits) {
+      deposits = saved.deposits;
+      // 廃止されたプリセット（buy-/kessan- でPRESET_DEPOSITSに無いもの）を自動削除
+      const presetIds = new Set(PRESET_DEPOSITS.map(p => p.id));
+      deposits = deposits.filter(d => {
+        const id = String(d.id || '');
+        if ((id.startsWith('buy-') || id.startsWith('kessan-')) && !presetIds.has(id)) return false;
+        return true;
+      });
+      // プリセット入金をマージ（未追加かつ削除済みでないもののみ）
+      PRESET_DEPOSITS.forEach(p => {
+        if (!deposits.find(d => d.id === p.id) && !deletedPresetIds.has(p.id)) deposits.push(p);
+      });
+    }
+    if (saved.suddenExpenses) suddenExpenses = saved.suddenExpenses;
+    if (saved.ccData) saved.ccData.forEach(s => {
+      const card = CREDIT_CARDS.find(c => c.id === s.id);
+      if (!card) return;
+      card.items      = s.items      || [];
+      card.acc        = s.acc        || card.acc;
+      // billingDay・closingDay はコード定義を優先（localStorage値は無視）
+    });
+  } catch(e) {
+    console.warn('[支払い管理] localStorageの読み込みに失敗しました:', e);
+  }
+}
+
+// ================================================================
+// トースト
+// ================================================================
+
+let _saveTimer;
+function showSaveToast() {
+  const el = document.getElementById('save-toast');
+  el.classList.add('show');
+  el.style.opacity = '1';
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => { el.style.opacity = '0'; el.classList.remove('show'); }, 2000);
+}
+
+let _undoFn = null;
+let _undoTimer;
+function showUndoToast(message, undoFn) {
+  _undoFn = undoFn;
+  document.getElementById('undo-msg').textContent = message;
+  const el = document.getElementById('undo-toast');
+  el.classList.add('show');
+  el.style.opacity = '1';
+  clearTimeout(_undoTimer);
+  _undoTimer = setTimeout(() => { el.style.opacity = '0'; el.classList.remove('show'); _undoFn = null; }, 4000);
+}
+function execUndo() {
+  if (_undoFn) { _undoFn(); _undoFn = null; }
+  const el = document.getElementById('undo-toast');
+  el.style.opacity = '0'; el.classList.remove('show');
+}
+
+// ================================================================
+// 口座セレクト
+// ================================================================
+
+function accSelectHTML(selectedId, onchangeFn) {
+  const opts = ACCOUNTS.map(a =>
+    `<option value="${esc(a.id)}" ${a.id===selectedId?'selected':''}>${esc(a.label)}</option>`
+  ).join('');
+  const ac = ACCOUNTS.find(a => a.id === selectedId);
+  return `<select class="acc-select ${ac ? ac.c.sel : 'border-gray-300 text-gray-500'}"
+    style="background:${ac ? ac.c.selBg : '#f9fafb'}"
+    onchange="${esc(onchangeFn)}(this.value); this.style.background=getAccBg(this.value); this.className='acc-select '+getAccSel(this.value);"
+  >${opts}</select>`;
+}
+function getAccBg(id)  { const a = ACCOUNTS.find(a => a.id===id); return a ? a.c.selBg : '#f9fafb'; }
+function getAccSel(id) { const a = ACCOUNTS.find(a => a.id===id); return a ? a.c.sel   : 'border-gray-300 text-gray-500'; }
+
+// ================================================================
+// 口座カード
+// ================================================================
+
+function ccTotalForAccount(accId) {
+  return CREDIT_CARDS.filter(c => c.acc === accId)
+    .reduce((sum, c) => sum + c.items.reduce((s, item) => s + (item.amount || 0), 0), 0);
+}
+
+/**
+ * 月末残高見込み用：引落日が今日以降のカードのみ合計
+ * 引落日が今日より前 = 今月はもう引き落とし済み（残高に反映済み）→ 除外
+ */
+function ccOutForMonthEnd(accId) {
+  const today = new Date().getDate();
+  return CREDIT_CARDS
+    .filter(c => c.acc === accId && c.billingDay >= today)
+    .reduce((sum, c) => sum + c.items.reduce((s, item) => s + (item.amount || 0), 0), 0);
+}
+
+/** ラベル先頭の月番号を取得（"5/23 ..." → 5、日付なし → null） */
+function labelMonth(label) {
+  const m = String(label || '').match(/^(\d+)\/\d+/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function renderAccountCards() {
+  const currentMonth = new Date().getMonth() + 1;
+
+  ['taiki','wife'].forEach(owner => {
+    const container = document.getElementById(`cards-${owner}`);
+    container.innerHTML = '';
+    ACCOUNTS.filter(a => a.owner === owner).forEach(acc => {
+      const bal    = balances[acc.id] || 0;
+      const ccOut  = ccOutForMonthEnd(acc.id);
+      const today2 = new Date().getDate();
+
+      // 引き落としスケジュール：今日以降（day===null は月末扱いで含める）
+      const dedItems = deductions
+        .filter(d => d.acc === acc.id && d.amount)
+        .filter(d => d.day === null || d.day >= today2);
+      const dedOut = dedItems.reduce((s, d) => s + (d.amount || 0), 0);
+
+      // 当月末までの未入金の入金予定（日付なし含む）
+      const pendingIn = deposits
+        .filter(d => !d.received && d.acc === acc.id)
+        .filter(d => { const mo = labelMonth(d.label); return mo === null || mo === currentMonth; })
+        .reduce((s, d) => s + (parseFloat(String(d.amount||'').replace(/,/g,'')) || 0), 0);
+
+      // 当月末までの未払いの急な支出予定（日付なし含む）
+      const pendingOut = suddenExpenses
+        .filter(e => !e.paid && e.acc === acc.id)
+        .filter(e => { const mo = labelMonth(e.label); return mo === null || mo === currentMonth; })
+        .reduce((s, e) => s + (parseFloat(String(e.amount||'').replace(/,/g,'')) || 0), 0);
+
+      const afterBal = bal + pendingIn - dedOut - ccOut - pendingOut;
+      const theme    = acc.c;
+
+      // 引き落とし予定の内訳
+      const dedDetailHTML = dedItems.map(d =>
+        `<div class="flex justify-between text-xs text-gray-400 pl-3 py-0.5">
+          <span>${esc(d.name)}<span class="text-gray-300 ml-1">${d.label ?? (d.day + '日')}</span></span>
+          <span>−¥${(d.amount||0).toLocaleString()}</span>
+        </div>`
+      ).join('');
+
+      // カード引き落としの内訳（引落日が今日以降のカードのみ）
+      const today = new Date().getDate();
+      const ccItems = CREDIT_CARDS.filter(c => c.acc === acc.id && c.billingDay >= today && ccTotal(c) > 0);
+      const ccDetailHTML = ccItems.map(c =>
+        `<div class="flex justify-between text-xs text-gray-400 pl-3 py-0.5">
+          <span>${esc(c.name)}<span class="text-gray-300 ml-1">${c.billingDay}日引落</span></span>
+          <span>−¥${ccTotal(c).toLocaleString()}</span>
+        </div>`
+      ).join('');
+
+      // 急な支出の内訳
+      const suddenItems = suddenExpenses
+        .filter(e => !e.paid && e.acc === acc.id)
+        .filter(e => { const mo = labelMonth(e.label); return mo === null || mo === currentMonth; });
+      const suddenDetailHTML = suddenItems.map(e =>
+        `<div class="flex justify-between text-xs text-gray-400 pl-3 py-0.5">
+          <span>${esc(e.label || '支出')}</span>
+          <span>−¥${(parseFloat(String(e.amount||'').replace(/,/g,''))||0).toLocaleString()}</span>
+        </div>`
+      ).join('');
+
+      // 入金予定の内訳
+      const depositItems = deposits
+        .filter(d => !d.received && d.acc === acc.id)
+        .filter(d => { const mo = labelMonth(d.label); return mo === null || mo === currentMonth; });
+      const depositDetailHTML = depositItems.map(d =>
+        `<div class="flex justify-between text-xs text-gray-400 pl-3 py-0.5">
+          <span>${esc(d.label || '入金')}</span>
+          <span class="text-blue-400">+¥${(parseFloat(String(d.amount||'').replace(/,/g,''))||0).toLocaleString()}</span>
+        </div>`
+      ).join('');
+
+      const cardId = `acc-detail-${acc.id}`;
+
+      const card = document.createElement('div');
+      card.className = `${theme.bg} border ${theme.border} rounded-2xl p-4 min-w-0 shadow-sm`;
+      card.innerHTML = `
+        <div class="flex items-center gap-1.5 mb-2">
+          <div class="w-2 h-2 rounded-full ${theme.dot} flex-shrink-0"></div>
+          <span class="text-xs font-semibold ${theme.text} truncate">${esc(acc.name)}</span>
+        </div>
+        <div class="flex items-baseline gap-0.5 mb-3">
+          <span class="text-gray-400 text-sm">¥</span>
+          <input type="text" inputmode="numeric" value="${numFmt(bal || '')}" placeholder="0"
+            aria-label="${esc(acc.name)}残高"
+            class="bg-transparent text-xl font-bold ${theme.text} editable w-full min-w-0"
+            oninput="onBalanceInput('${acc.id}', numInput(this))"
+            onblur="onBalanceBlur('${acc.id}', this.value.replace(/,/g,''))" />
+        </div>
+        <div class="border-t ${theme.border} pt-2 space-y-1">
+          ${pendingIn > 0 ? `
+          <div class="cursor-pointer select-none" onclick="toggleAccDetail('${cardId}-dep')">
+            <div class="flex justify-between text-xs">
+              <span class="text-gray-500 flex items-center gap-1">入金予定
+                <svg class="w-2.5 h-2.5 text-gray-400 chevron" id="${cardId}-dep-chev" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+              </span>
+              <span class="text-blue-500">+¥${pendingIn.toLocaleString()}</span>
+            </div>
+          </div>
+          <div id="${cardId}-dep" class="cc-items">${depositDetailHTML}</div>` : ''}
+          ${dedOut > 0 ? `
+          <div class="cursor-pointer select-none" onclick="toggleAccDetail('${cardId}-ded')">
+            <div class="flex justify-between text-xs">
+              <span class="text-gray-500 flex items-center gap-1">引き落とし予定
+                <svg class="w-2.5 h-2.5 text-gray-400 chevron" id="${cardId}-ded-chev" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+              </span>
+              <span class="text-red-500">−¥${dedOut.toLocaleString()}</span>
+            </div>
+          </div>
+          <div id="${cardId}-ded" class="cc-items">${dedDetailHTML}</div>` : ''}
+          ${ccOut > 0 ? `
+          <div class="cursor-pointer select-none" onclick="toggleAccDetail('${cardId}-cc')">
+            <div class="flex justify-between text-xs">
+              <span class="text-gray-500 flex items-center gap-1">カード引き落とし
+                <svg class="w-2.5 h-2.5 text-gray-400 chevron" id="${cardId}-cc-chev" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+              </span>
+              <span class="text-red-500">−¥${ccOut.toLocaleString()}</span>
+            </div>
+          </div>
+          <div id="${cardId}-cc" class="cc-items">${ccDetailHTML}</div>` : ''}
+          ${pendingOut > 0 ? `
+          <div class="cursor-pointer select-none" onclick="toggleAccDetail('${cardId}-sud')">
+            <div class="flex justify-between text-xs">
+              <span class="text-gray-500 flex items-center gap-1">急な支出予定
+                <svg class="w-2.5 h-2.5 text-gray-400 chevron" id="${cardId}-sud-chev" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+              </span>
+              <span class="text-orange-500">−¥${pendingOut.toLocaleString()}</span>
+            </div>
+          </div>
+          <div id="${cardId}-sud" class="cc-items">${suddenDetailHTML}</div>` : ''}
+          <div class="flex justify-between text-xs font-semibold pt-0.5 border-t ${theme.border}">
+            <span class="text-gray-500">月末残高見込み</span>
+            <span class="${afterBal >= 0 ? 'text-emerald-600' : 'text-red-600'}">¥${afterBal.toLocaleString()}</span>
+          </div>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  });
+}
+
+// 入力中はサマリのみ更新（カード再描画なし → フォーカス保持）
+function onBalanceInput(id, val) {
+  balances[id] = parseInt(String(val).replace(/,/g,''), 10) || 0;
+  calcSummary();
+}
+// フォーカスが外れたときにカードを再描画して保存
+function onBalanceBlur(id, val) {
+  balances[id] = parseInt(String(val).replace(/,/g,''), 10) || 0;
+  save();
+  renderAccountCards();
+}
+
+// ================================================================
+// クレジットカード
+// ================================================================
+
+function ccTotal(card) {
+  return card.items.reduce((sum, item) => sum + (item.amount || 0), 0);
+}
+
+function renderCreditCards() {
+  const el = document.getElementById('cc-list');
+  el.innerHTML = '';
+  CREDIT_CARDS.forEach(card => {
+    const cardTheme  = card.theme;
+    const total      = ccTotal(card);
+    const isOpen     = card._open || false;
+    const closingLbl = card.closingDay === 31 ? '末日' : `${card.closingDay}日`;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = `border ${cardTheme.border} rounded-xl overflow-hidden shadow-sm`;
+    wrapper.id = `cc-wrapper-${card.id}`;
+    wrapper.innerHTML = `
+      <div class="${cardTheme.headerBg} px-4 py-3 flex items-center gap-3 cursor-pointer select-none"
+        onclick="toggleCC('${esc(card.id)}')">
+        <div class="w-2 h-2 rounded-full ${cardTheme.dot} flex-shrink-0"></div>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-semibold ${cardTheme.text}">${esc(card.name)}</div>
+          <div class="text-xs text-gray-400 flex items-center gap-2 mt-0.5 flex-wrap">
+            <span>締め: <span class="font-medium text-gray-600">${closingLbl}</span></span>
+            <span>引落: <span class="font-medium text-gray-600">${card.billingDay}日</span></span>
+            <span onclick="event.stopPropagation()">${accSelectHTML(card.acc, `setCCAcc.bind(null,'${esc(card.id)}')`)}</span>
+          </div>
+        </div>
+        <div class="text-right flex-shrink-0">
+          <div class="text-lg font-bold ${cardTheme.text}" id="cc-total-${card.id}">¥${total.toLocaleString()}</div>
+          <div class="text-xs text-gray-400">今月利用額</div>
+        </div>
+        <svg class="w-4 h-4 text-gray-400 chevron ${isOpen ? 'open' : ''}" id="chevron-${card.id}"
+          fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </div>
+      <div class="cc-items ${isOpen ? 'open' : ''} bg-white" id="cc-items-${card.id}">
+        <div class="px-4 pt-3 pb-1" id="cc-rows-${card.id}"></div>
+        <div class="px-4 pb-3 pt-1 flex items-center gap-3">
+          <button onclick="addCCItem('${esc(card.id)}')"
+            class="text-xs ${cardTheme.text} border ${cardTheme.border} rounded-lg px-3 py-1.5 transition ${cardTheme.bg} hover:opacity-80">
+            + 明細を追加
+          </button>
+          <span class="ml-auto text-xs text-gray-400" id="cc-count-${card.id}">
+            ${card.items.length > 0 ? `${card.items.length}件` : '明細なし'}
+          </span>
+        </div>
+      </div>
+    `;
+    el.appendChild(wrapper);
+    renderCCItems(card);
+  });
+}
+
+function renderCCItems(card) {
+  const container = document.getElementById(`cc-rows-${card.id}`);
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (card.items.length === 0) {
+    container.innerHTML = `<p class="text-xs text-gray-400 py-2 pb-3">明細がありません</p>`;
+    return;
+  }
+
+  card.items.forEach((item, idx) => {
+    const catStyle  = CAT[item.cat] || CAT.other;
+    const cardTheme = card.theme;
+    const row = document.createElement('div');
+    // モバイルフレンドリー：2行レイアウト
+    row.className = `py-2.5 border-b ${cardTheme.itemBorder}`;
+    row.innerHTML = `
+      <div class="flex items-start gap-2">
+        <div class="w-1.5 h-1.5 rounded-full ${catStyle.dot} flex-shrink-0 mt-2"></div>
+        <div class="flex-1 min-w-0">
+          <input type="text" value="${esc(item.name)}" placeholder="店名・内容"
+            aria-label="明細名"
+            class="bg-transparent text-sm text-gray-800 w-full focus:outline focus:outline-2 focus:outline-blue-500 focus:outline-offset-1 rounded border-b border-transparent focus:border-transparent"
+            oninput="setCCItemName('${esc(card.id)}', ${idx}, this.value)" />
+          <div class="flex items-center gap-2 mt-2">
+            <select
+              aria-label="カテゴリ"
+              class="acc-select border-gray-200 text-gray-500"
+              style="background:#f9fafb; font-size:.68rem; padding:2px 6px;"
+              onchange="setCCItemCat('${esc(card.id)}', ${idx}, this.value)">
+              ${Object.entries(CAT).map(([k,v]) =>
+                `<option value="${k}" ${k===item.cat?'selected':''}>${esc(v.tag)}</option>`
+              ).join('')}
+            </select>
+            <span class="text-gray-300 text-xs">¥</span>
+            <input type="text" inputmode="numeric" value="${numFmt(item.amount)}" placeholder="0"
+              aria-label="金額"
+              class="bg-transparent ${catStyle.text} font-semibold w-24 editable placeholder:text-gray-300 text-sm"
+              oninput="setCCItemAmount('${esc(card.id)}', ${idx}, numInput(this))" />
+          </div>
+        </div>
+        <button onclick="removeCCItem('${esc(card.id)}', ${idx})"
+          aria-label="${esc(item.name || '明細')}を削除"
+          class="text-gray-300 hover:text-red-500 transition flex-shrink-0 p-2 -mr-2 min-w-[36px] min-h-[36px] flex items-center justify-center">✕</button>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function toggleAccDetail(panelId) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  const isOpen = panel.classList.toggle('open');
+  const chev = document.getElementById(panelId + '-chev');
+  if (chev) chev.classList.toggle('open', isOpen);
+}
+
+function toggleCC(id) {
+  const card = CREDIT_CARDS.find(c => c.id === id);
+  card._open = !card._open;
+  document.getElementById(`cc-items-${id}`).classList.toggle('open', card._open);
+  document.getElementById(`chevron-${id}`).classList.toggle('open', card._open);
+}
+
+function setCCAcc(id, val) {
+  const card = CREDIT_CARDS.find(c => c.id === id);
+  card.acc = val;
+  save(); renderAccountCards(); calcSummary();
+}
+
+function addCCItem(id) {
+  const card = CREDIT_CARDS.find(c => c.id === id);
+  card.items.push({ id: Date.now(), name: '', amount: null, cat: 'other' });
+  card._open = true;
+  // 対象カードのみ更新（全カード再描画しない）
+  renderCCItems(card);
+  updateCCHeader(card);
+  document.getElementById(`cc-items-${id}`).classList.add('open');
+  document.getElementById(`chevron-${id}`).classList.add('open');
+  save(); renderAccountCards(); calcSummary();
+}
+
+function removeCCItem(cardId, idx) {
+  const card    = CREDIT_CARDS.find(c => c.id === cardId);
+  const removed = card.items.splice(idx, 1)[0];
+  save(); renderCCItems(card); updateCCHeader(card); renderAccountCards(); calcSummary();
+  // UNDO
+  showUndoToast(`「${removed.name || '明細'}」を削除しました`, () => {
+    card.items.splice(idx, 0, removed);
+    save(); renderCCItems(card); updateCCHeader(card); renderAccountCards(); calcSummary();
+  });
+}
+
+function setCCItemName(cardId, idx, val) {
+  CREDIT_CARDS.find(c => c.id === cardId).items[idx].name = val;
+  save();
+}
+function setCCItemCat(cardId, idx, val) {
+  const card = CREDIT_CARDS.find(c => c.id === cardId);
+  card.items[idx].cat = val;
+  save(); renderCCItems(card);
+}
+function setCCItemAmount(cardId, idx, val) {
+  const card = CREDIT_CARDS.find(c => c.id === cardId);
+  const raw = String(val).replace(/,/g,'');
+  card.items[idx].amount = raw === '' ? null : parseInt(raw, 10);
+  save(); updateCCHeader(card); renderAccountCards(); calcSummary();
+}
+
+function updateCCHeader(card) {
+  const totalEl = document.getElementById(`cc-total-${card.id}`);
+  if (totalEl) totalEl.textContent = `¥${ccTotal(card).toLocaleString()}`;
+  const countEl = document.getElementById(`cc-count-${card.id}`);
+  if (countEl) countEl.textContent = card.items.length > 0 ? `${card.items.length}件` : '明細なし';
+}
+
+// ================================================================
+// タイムライン（引き落とし + クレカ引き落とし日）
+// ================================================================
+
+const todayDay = new Date().getDate();
+
+function buildTimelineEntries() {
+  const entries = deductions.map((d, i) => ({ ...d, _type:'deduction', _origIdx:i }));
+  CREDIT_CARDS.forEach(card => {
+    const total = ccTotal(card);
+    entries.push({
+      name:  card.name, day: card.billingDay, label: null,
+      amount: total > 0 ? total : null, cat: 'other', acc: card.acc,
+      _type: 'credit', _ccId: card.id, _ccTheme: card.theme,
+    });
+  });
+  return entries.sort((a, b) => (a.day ?? 32) - (b.day ?? 32));
+}
+
+function renderTimeline() {
+  const el = document.getElementById('timeline');
+  el.innerHTML = '';
+
+  buildTimelineEntries().forEach(item => {
+    const isCredit = item._type === 'credit';
+    const catStyle = isCredit ? null : (CAT[item.cat] || CAT.other);
+    const cardTheme = isCredit ? item._ccTheme : null;
+    const dayLabel  = item.label ?? `${item.day}日`;
+    const isPast    = item.day !== null && item.day < todayDay;
+    const isToday   = item.day === todayDay;
+    const idx       = item._origIdx;
+
+    const row = document.createElement('div');
+    row.className = [
+      'relative flex items-center gap-2.5 py-2.5 pl-3 pr-3 rounded-xl transition-colors',
+      isToday ? 'bg-yellow-50 border border-yellow-300' : 'hover:bg-gray-50',
+      isPast  ? 'opacity-40' : '',
+    ].join(' ');
+
+    const dayClass = isToday
+      ? 'bg-yellow-400 text-white'
+      : isCredit
+        ? `${cardTheme.bg} ${cardTheme.text} border ${cardTheme.border}`
+        : `${catStyle.bg} ${catStyle.text} border ${catStyle.border}`;
+
+    const nameColor   = isCredit ? cardTheme.text : 'text-gray-900';
+    const amountColor = isCredit ? cardTheme.text : (catStyle ? catStyle.text : 'text-gray-700');
+
+    const tagHTML = isCredit
+      ? `<span class="text-xs px-1.5 py-px rounded-full ${cardTheme.bg} ${cardTheme.text} border ${cardTheme.border}">💳 クレカ</span>`
+      : `<span class="text-xs px-1.5 py-px rounded-full ${catStyle.bg} ${catStyle.text} border ${catStyle.border}">${esc(catStyle.tag)}</span>`;
+
+    const accPart = isCredit
+      ? `<span class="text-xs text-gray-400">${esc(ACCOUNTS.find(a => a.id===item.acc)?.label ?? '')}</span>`
+      : accSelectHTML(item.acc, `setDedAcc.bind(null,${idx})`);
+
+    const amountPart = isCredit
+      ? `<span class="${amountColor} font-semibold text-sm">${item.amount != null ? '¥' + item.amount.toLocaleString() : '—'}</span>`
+      : `<div class="flex items-center gap-0.5 flex-shrink-0">
+           <span class="text-gray-300 text-xs">¥</span>
+           <input type="text" inputmode="numeric" value="${numFmt(item.amount)}" placeholder="未定"
+             aria-label="${esc(item.name)}金額"
+             class="bg-transparent ${catStyle.text} font-semibold text-right w-20 editable placeholder:text-gray-300 text-sm"
+             oninput="setDedAmount(${idx}, numInput(this))" />
+         </div>`;
+
+    row.innerHTML = `
+      <div class="relative z-10 w-[3.8rem] flex-shrink-0 text-center">
+        <span class="block text-xs font-bold px-1 py-1 rounded-lg ${dayClass}">${esc(dayLabel)}</span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="text-sm font-medium ${nameColor}">${esc(item.name)}</span>
+          ${tagHTML}
+          ${isToday ? '<span class="text-xs text-yellow-600 font-bold animate-pulse">TODAY</span>' : ''}
+          ${isPast  ? '<span class="text-xs text-gray-300">済</span>' : ''}
+        </div>
+        <div class="mt-1">${accPart}</div>
+      </div>
+      ${amountPart}
+    `;
+    el.appendChild(row);
+  });
+}
+
+function setDedAmount(idx, val) {
+  const raw = String(val).replace(/,/g,'');
+  deductions[idx].amount = raw === '' ? null : parseInt(raw, 10);
+  save(); calcSummary();
+}
+function setDedAcc(idx, val) {
+  deductions[idx].acc = val;
+  save(); renderTimeline();
+}
+
+// ================================================================
+// 固定費一覧
+// ================================================================
+
+function renderFixed() {
+  const el = document.getElementById('fixed-list');
+  el.innerHTML = '';
+
+  const groups = [
+    { key:'bank',   label:'🏦 銀行引き落とし', headerCls:'text-blue-600',  borderCls:'border-blue-100',  bgCls:'bg-blue-50' },
+    { key:'credit', label:'💳 クレジット',      headerCls:'text-purple-600', borderCls:'border-purple-100', bgCls:'bg-purple-50' },
+    { key:'cash',   label:'💵 現金',            headerCls:'text-green-600',  borderCls:'border-green-100',  bgCls:'bg-green-50' },
+  ];
+
+  groups.forEach(group => {
+    const items = fixed.map((item, idx) => ({ item, idx })).filter(({ item }) => (item.payType || 'bank') === group.key);
+    if (items.length === 0) return;
+
+    const subtotal = items.reduce((s, { item }) => s + (item.amount || 0), 0);
+
+    // グループヘッダー
+    const header = document.createElement('div');
+    header.className = `flex items-center justify-between px-2 py-1.5 mt-2 first:mt-0 rounded-lg ${group.bgCls}`;
+    header.innerHTML = `
+      <span class="text-xs font-bold ${group.headerCls}">${group.label}</span>
+      <span class="text-xs font-semibold ${group.headerCls}">¥${subtotal.toLocaleString()}</span>
+    `;
+    el.appendChild(header);
+
+    // 仕切り線 + アイテム
+    const section = document.createElement('div');
+    section.className = `divide-y ${group.borderCls} mb-2`;
+
+    items.forEach(({ item, idx }) => {
+      const catStyle = CAT[item.cat] || CAT.other;
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-3 py-2.5';
+      row.innerHTML = `
+        <div class="w-1.5 h-1.5 rounded-full ${catStyle.dot} flex-shrink-0"></div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-medium text-gray-800">${esc(item.name)}</span>
+            <span class="text-xs ${catStyle.text} opacity-80">${esc(catStyle.tag)}</span>
+          </div>
+          <div class="mt-0.5">${accSelectHTML(item.acc, `setFixAcc.bind(null,${idx})`)}</div>
+        </div>
+        <div class="flex items-center gap-0.5 flex-shrink-0">
+          <span class="text-gray-300 text-xs">¥</span>
+          <input type="text" inputmode="numeric" value="${numFmt(item.amount)}" placeholder="未定"
+            aria-label="${esc(item.name)}金額"
+            class="bg-transparent ${catStyle.text} font-bold text-right w-24 editable placeholder:text-gray-300 text-sm"
+            oninput="setFixAmount(${idx}, numInput(this))" />
+        </div>
+      `;
+      section.appendChild(row);
+    });
+
+    el.appendChild(section);
+  });
+}
+
+function setFixAmount(idx, val) {
+  const raw = String(val).replace(/,/g,'');
+  fixed[idx].amount = raw === '' ? null : parseInt(raw, 10);
+  save(); renderAccountCards(); calcSummary();
+}
+function setFixAcc(idx, val) {
+  fixed[idx].acc = val;
+  save(); renderAccountCards(); calcSummary();
+}
+
+// ================================================================
+// 入金予定
+// ================================================================
+
+/** ラベル先頭の「M/D」を月日の並び用キーに（なければ末尾扱い） */
+function depositLabelSortKey(label) {
+  const m = String(label || '').match(/^(\d+)\/(\d+)/);
+  return m ? parseInt(m[1], 10) * 100 + parseInt(m[2], 10) : 99991231;
+}
+
+function compareDepositsByLabelDate(a, b) {
+  const ka = depositLabelSortKey(a.label);
+  const kb = depositLabelSortKey(b.label);
+  if (ka !== kb) return ka - kb;
+  return String(a.label || '').localeCompare(String(b.label || ''), 'ja');
+}
+
+function sortDepositsByDate() {
+  pushDepositHistory();
+  deposits.sort(compareDepositsByLabelDate);
+  save();
+  renderDeposits();
+  showSyncToast('📅 日付順に並べ替えました');
+}
+
+function renderDeposits() {
+  const el = document.getElementById('deposit-list');
+  el.innerHTML = '';
+  deposits.forEach(dep => {
+    const received = !!dep.received;
+    const row = document.createElement('div');
+    row.className = `flex items-center gap-2 flex-wrap rounded-xl px-2 py-1 transition-colors ${received ? 'bg-emerald-50' : ''}`;
+    row.innerHTML = `
+      <label class="flex items-center cursor-pointer flex-shrink-0" title="${received ? '入金済み（クリックで取消）' : '入金されたらチェック'}">
+        <input type="checkbox" ${received ? 'checked' : ''}
+          onchange="toggleDepositReceived('${dep.id}')"
+          class="sr-only" />
+        <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${received ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 hover:border-emerald-400'}">
+          ${received ? '<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+        </div>
+      </label>
+      <input type="text" value="${esc(dep.label)}" placeholder="項目名"
+        aria-label="入金項目名"
+        class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs w-28 focus:outline focus:outline-2 focus:outline-blue-500 focus:outline-offset-1 ${received ? 'text-gray-400 line-through' : 'text-gray-800'}"
+        oninput="updDep('${dep.id}', 'label', this.value)" />
+      <span class="text-gray-300 text-xs">¥</span>
+      <input type="text" inputmode="numeric" value="${numFmt(dep.amount)}" placeholder="0"
+        aria-label="入金額"
+        class="bg-transparent font-semibold editable w-28 text-sm ${received ? 'text-emerald-500' : 'text-blue-600'}"
+        oninput="updDep('${dep.id}', 'amount', numInput(this)); calcSummary();" />
+      ${accSelectHTML(dep.acc, `updDepAcc.bind(null,'${dep.id}')`)}
+      ${received ? '<span class="text-xs text-emerald-500 font-medium flex-shrink-0">入金済み ✓</span>' : ''}
+      <button onclick="removeDeposit('${dep.id}')"
+        aria-label="${esc(dep.label)}を削除"
+        class="text-gray-300 hover:text-red-500 transition ml-auto p-1.5 min-w-[36px] min-h-[36px] flex items-center justify-center">✕</button>
+    `;
+    el.appendChild(row);
+  });
+  calcSummary();
+}
+
+function toggleDepositReceived(id) {
+  const dep = deposits.find(d => String(d.id) === String(id));
+  if (!dep) return;
+  const amount = parseFloat(String(dep.amount).replace(/,/g,'')) || 0;
+  if (dep.received) {
+    dep.received = false;
+    balances[dep.acc] = (balances[dep.acc] || 0) - amount;
+  } else {
+    dep.received = true;
+    balances[dep.acc] = (balances[dep.acc] || 0) + amount;
+  }
+  save();
+  renderDeposits();
+  renderAccountCards();
+  calcSummary();
+}
+
+// 入金履歴スタック（最大20件）
+let _depositHistory = [];
+
+function pushDepositHistory() {
+  _depositHistory.push(JSON.stringify(deposits));
+  if (_depositHistory.length > 20) _depositHistory.shift();
+  updateDepositUndoBtn();
+}
+
+function updateDepositUndoBtn() {
+  const btn = document.getElementById('deposit-undo-btn');
+  if (!btn) return;
+  if (_depositHistory.length > 0) {
+    btn.disabled = false;
+    btn.className = 'flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm bg-orange-50 text-orange-600 border-orange-300 hover:bg-orange-100 cursor-pointer';
+  } else {
+    btn.disabled = true;
+    btn.className = 'flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed';
+  }
+}
+
+function undoDeposits() {
+  if (_depositHistory.length === 0) return;
+  deposits = JSON.parse(_depositHistory.pop());
+  updateDepositUndoBtn();
+  save(); renderDeposits(); calcSummary();
+  showSyncToast('↩ 元に戻しました');
+}
+
+function updDep(id, key, val)  {
+  const d = deposits.find(d => String(d.id)===String(id));
+  if (!d) return;
+  d[key] = key === 'amount' ? String(val).replace(/,/g,'') : val;
+  save();
+}
+function updDepAcc(id, val)    { const d = deposits.find(d => String(d.id)===String(id)); if(d) d.acc  = val; save(); }
+function addDeposit()          {
+  pushDepositHistory();
+  deposits.push({ id:Date.now(), label:'入金', amount:'', acc:'taiki-rakuten' });
+  save(); renderDeposits();
+}
+function removeDeposit(id) {
+  pushDepositHistory();
+  const removed = deposits.find(d => String(d.id) === String(id));
+  deposits = deposits.filter(d => String(d.id) !== String(id));
+  // プリセットIDなら削除済みとして記録（再マージ防止）
+  const sid = String(id);
+  if (sid.startsWith('buy-') || sid.startsWith('kessan-') || sid.startsWith('jido-')) {
+    deletedPresetIds.add(sid);
+  }
+  save(); renderDeposits();
+  showUndoToast(`「${removed?.label || '入金'}」を削除しました`, () => {
+    _depositHistory.pop();
+    updateDepositUndoBtn();
+    deletedPresetIds.delete(sid);
+    deposits.unshift(removed);
+    save(); renderDeposits();
+  });
+}
+
+// ================================================================
+// 急な支出予定
+// ================================================================
+
+function suddenLabelSortKey(label) {
+  const m = String(label || '').match(/^(\d+)\/(\d+)/);
+  return m ? parseInt(m[1], 10) * 100 + parseInt(m[2], 10) : 99991231;
+}
+
+function sortSuddenByDate() {
+  pushSuddenHistory();
+  suddenExpenses.sort((a, b) => {
+    const ka = suddenLabelSortKey(a.label);
+    const kb = suddenLabelSortKey(b.label);
+    if (ka !== kb) return ka - kb;
+    return String(a.label || '').localeCompare(String(b.label || ''), 'ja');
+  });
+  save();
+  renderSuddenExpenses();
+  showSyncToast('📅 日付順に並べ替えました');
+}
+
+function renderSuddenExpenses() {
+  const el = document.getElementById('sudden-list');
+  el.innerHTML = '';
+  suddenExpenses.forEach(exp => {
+    const paid = !!exp.paid;
+    const row = document.createElement('div');
+    row.className = `flex items-center gap-2 flex-wrap rounded-xl px-2 py-1 transition-colors ${paid ? 'bg-red-50' : ''}`;
+    row.innerHTML = `
+      <label class="flex items-center cursor-pointer flex-shrink-0" title="${paid ? '支払済み（クリックで取消）' : '支払ったらチェック'}">
+        <input type="checkbox" ${paid ? 'checked' : ''}
+          onchange="toggleSuddenPaid('${exp.id}')"
+          class="sr-only" />
+        <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${paid ? 'bg-red-400 border-red-400' : 'border-gray-300 hover:border-red-300'}">
+          ${paid ? '<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+        </div>
+      </label>
+      <input type="text" value="${esc(exp.label)}" placeholder="項目名"
+        aria-label="支出項目名"
+        class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs w-28 focus:outline focus:outline-2 focus:outline-orange-500 focus:outline-offset-1 ${paid ? 'text-gray-400 line-through' : 'text-gray-800'}"
+        oninput="updSudden('${exp.id}', 'label', this.value)" />
+      <span class="text-gray-300 text-xs">¥</span>
+      <input type="text" inputmode="numeric" value="${numFmt(exp.amount)}" placeholder="0"
+        aria-label="支出額"
+        class="bg-transparent font-semibold editable w-28 text-sm ${paid ? 'text-red-300' : 'text-orange-500'}"
+        oninput="updSudden('${exp.id}', 'amount', numInput(this)); calcSummary();" />
+      ${accSelectHTML(exp.acc, `updSuddenAcc.bind(null,'${exp.id}')`)}
+      ${paid ? '<span class="text-xs text-red-400 font-medium flex-shrink-0">支払済み ✓</span>' : ''}
+      <button onclick="removeSuddenExpense('${exp.id}')"
+        aria-label="${esc(exp.label)}を削除"
+        class="text-gray-300 hover:text-red-500 transition ml-auto p-1.5 min-w-[36px] min-h-[36px] flex items-center justify-center">✕</button>
+    `;
+    el.appendChild(row);
+  });
+  calcSummary();
+}
+
+function toggleSuddenPaid(id) {
+  const exp = suddenExpenses.find(e => String(e.id) === String(id));
+  if (!exp) return;
+  const amount = parseFloat(String(exp.amount).replace(/,/g,'')) || 0;
+  if (exp.paid) {
+    exp.paid = false;
+    balances[exp.acc] = (balances[exp.acc] || 0) + amount;
+  } else {
+    exp.paid = true;
+    balances[exp.acc] = (balances[exp.acc] || 0) - amount;
+  }
+  save();
+  renderSuddenExpenses();
+  renderAccountCards();
+  calcSummary();
+}
+
+let _suddenHistory = [];
+
+function pushSuddenHistory() {
+  _suddenHistory.push(JSON.stringify(suddenExpenses));
+  if (_suddenHistory.length > 20) _suddenHistory.shift();
+  updateSuddenUndoBtn();
+}
+
+function updateSuddenUndoBtn() {
+  const btn = document.getElementById('sudden-undo-btn');
+  if (!btn) return;
+  if (_suddenHistory.length > 0) {
+    btn.disabled = false;
+    btn.className = 'flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm bg-orange-50 text-orange-600 border-orange-300 hover:bg-orange-100 cursor-pointer';
+  } else {
+    btn.disabled = true;
+    btn.className = 'flex items-center gap-1 text-xs font-medium border rounded-lg px-3 py-1.5 transition shadow-sm bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed';
+  }
+}
+
+function undoSuddenExpenses() {
+  if (_suddenHistory.length === 0) return;
+  suddenExpenses = JSON.parse(_suddenHistory.pop());
+  updateSuddenUndoBtn();
+  save(); renderSuddenExpenses(); calcSummary();
+  showSyncToast('↩ 元に戻しました');
+}
+
+function updSudden(id, key, val) {
+  const e = suddenExpenses.find(e => String(e.id) === String(id));
+  if (!e) return;
+  e[key] = key === 'amount' ? String(val).replace(/,/g,'') : val;
+  save();
+}
+function updSuddenAcc(id, val) {
+  const e = suddenExpenses.find(e => String(e.id) === String(id));
+  if (e) e.acc = val;
+  save();
+}
+function addSuddenExpense() {
+  pushSuddenHistory();
+  suddenExpenses.push({ id: Date.now(), label: '支出', amount: '', acc: 'taiki-rakuten' });
+  save(); renderSuddenExpenses();
+}
+function removeSuddenExpense(id) {
+  pushSuddenHistory();
+  const removed = suddenExpenses.find(e => String(e.id) === String(id));
+  suddenExpenses = suddenExpenses.filter(e => String(e.id) !== String(id));
+  save(); renderSuddenExpenses();
+  showUndoToast(`「${removed?.label || '支出'}」を削除しました`, () => {
+    _suddenHistory.pop();
+    updateSuddenUndoBtn();
+    suddenExpenses.unshift(removed);
+    save(); renderSuddenExpenses();
+  });
+}
+
+// ================================================================
+// サマリ計算
+// ================================================================
+
+function calcSummary() {
+  const totalBal    = ACCOUNTS.reduce((s, a)  => s + (balances[a.id] || 0), 0);
+  const totalFixed  = fixed.reduce((s, f)     => s + (f.amount || 0), 0);
+  const totalCC     = CREDIT_CARDS.reduce((s, c) => s + ccTotal(c), 0);
+  const totalIncome = deposits.reduce((s, d)  => s + (parseFloat(String(d.amount||'').replace(/,/g,'')) || 0), 0);
+  const totalSudden = suddenExpenses.reduce((s, e) => s + (parseFloat(String(e.amount||'').replace(/,/g,'')) || 0), 0);
+  const net         = totalBal + totalIncome - totalFixed - totalCC - totalSudden;
+
+  document.getElementById('s-total-balance').textContent = `¥${totalBal.toLocaleString()}`;
+  document.getElementById('s-total-fixed').textContent   = `¥${(totalFixed + totalCC + totalSudden).toLocaleString()}`;
+  document.getElementById('s-total-income').textContent  = totalIncome > 0 ? `¥${totalIncome.toLocaleString()}` : '—';
+  const netEl = document.getElementById('s-net');
+  netEl.textContent = `¥${net.toLocaleString()}`;
+  netEl.className   = `text-xl font-bold ${net >= 0 ? 'text-emerald-600' : 'text-red-600'}`;
+}
+
+// ================================================================
+// Zaim同期
+// ================================================================
+
+const WORKER_URL = 'https://shiharai-zaim.hiro10761076107610761076.workers.dev';
+
+// ZaimのアカウントIDと口座IDのマッピング（初回同期後に自動保存）
+let zaimAccountMap = {};
+
+async function syncZaim() {
+  const btn  = document.getElementById('sync-btn');
+  const icon = document.getElementById('sync-icon');
+  const label = document.getElementById('sync-label');
+  btn.disabled = true;
+  icon.classList.add('animate-spin');
+  label.textContent = '同期中...';
+
+  try {
+    const res  = await fetch(`${WORKER_URL}/api/accounts`);
+    const data = await res.json();
+
+    if (!data.accounts) throw new Error(JSON.stringify(data));
+
+    // デバッグ用：全口座名を表示
+    console.log('[Zaim口座一覧]', data.accounts.map(a => `${a.name} : ¥${a.balance}`).join('\n'));
+
+    // 口座名でマッチング（完全一致 → 部分一致の順）
+    const rules = [
+      { keywords: ['楽天銀行', '楽天'],       id: 'taiki-rakuten',   done: false },
+      { keywords: ['住信SBI', 'SBI', '住信'],  id: 'taiki-sbi',       done: false },
+      { keywords: ['銚子信用金庫', '銚子信金', '銚子'], id: 'taiki-choushi-p', done: false },
+    ];
+
+    let updated = 0;
+    data.accounts.forEach(acc => {
+      const n = acc.name || '';
+      for (const rule of rules) {
+        if (rule.done) continue;
+        if (rule.keywords.some(kw => n.includes(kw))) {
+          if (acc.balance != null) {
+            balances[rule.id] = Math.abs(acc.balance);
+            updated++;
+          }
+          rule.done = true;
+          break;
+        }
+      }
+    });
+
+    save();
+    renderAccountCards();
+    calcSummary();
+
+    const unmatched = data.accounts
+      .filter(a => !rules.some(r => r.done && r.keywords.some(kw => (a.name||'').includes(kw))))
+      .map(a => a.name).join(', ');
+
+    showSyncToast(`✅ ${updated}件を同期しました${unmatched ? `（未マッチ: ${unmatched}）` : ''}`);
+  } catch(e) {
+    console.warn('[Zaim同期エラー]', e);
+    showSyncToast('❌ 同期に失敗しました: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+    icon.classList.remove('animate-spin');
+    label.textContent = 'Zaimと同期';
+  }
+}
+
+let _syncTimer;
+function showSyncToast(msg, isError = false) {
+  const el = document.getElementById('sync-toast');
+  el.textContent = msg;
+  el.style.background = isError ? '#ef4444' : '#10b981';
+  el.style.opacity = '1';
+  el.classList.add('show');
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    el.style.opacity = '0';
+    el.classList.remove('show');
+  }, 3500);
+}
+
+// ================================================================
+// 決算管理（Googleスプレッドシート）連携
+// ================================================================
+
+const KESSAN_SHEET_ID = '1LP5yrOSQEnTzN073QDF41INjBClRWTlMsF5-A4T3E10';
+const KESSAN_BIZ = {
+  trading: '既存事業（商社・卸売）',
+  car:     '自動車事業',
+};
+
+function fetchKessanData() {
+  return new Promise((resolve, reject) => {
+    const cbName = '__kessanCallback__';
+    window[cbName] = function(data) {
+      delete window[cbName];
+      if (scriptEl.parentNode) scriptEl.parentNode.removeChild(scriptEl);
+      resolve(data);
+    };
+    const scriptEl = document.createElement('script');
+    scriptEl.src = `https://docs.google.com/spreadsheets/d/${KESSAN_SHEET_ID}/gviz/tq?tqx=responseHandler:${cbName}`;
+    scriptEl.onerror = () => { delete window[cbName]; reject(new Error('スプレッドシートへの接続に失敗しました')); };
+    document.head.appendChild(scriptEl);
+    setTimeout(() => { if (window[cbName]) { delete window[cbName]; reject(new Error('タイムアウト（10秒）')); } }, 10000);
+  });
+}
+
+async function syncKessan() {
+  const btn   = document.getElementById('kessan-btn');
+  const label = document.getElementById('kessan-label');
+  btn.disabled = true;
+  label.textContent = '取得中...';
+
+  try {
+    const data = await fetchKessanData();
+    const rows = data.table.rows;
+    const get  = (row, i) => (row.c[i] && row.c[i].v != null) ? row.c[i].v : null;
+
+    // 翌月（今が4月なら5月）を対象
+    const now         = new Date();
+    const targetMonth = now.getMonth() + 1; // 当月（1〜12）
+    const monthLabel  = `${targetMonth}月`;
+
+    // 翌月の全件を1行ずつ取得
+    const NOTE_MAP = { 1:'①', 2:'②', 3:'③', 4:'④', 5:'⑤', 6:'⑥', 7:'⑦', 8:'⑧', 9:'⑨' };
+    const entries = [];
+    rows.forEach(row => {
+      const bizId  = String(get(row, 0) || '').trim();
+      const month  = get(row, 1);
+      const day    = get(row, 2);
+      const profit = get(row, 5);
+      const rawNote = get(row, 6);
+      const memo   = get(row, 7);
+      if (!bizId || month == null || !profit) return;
+      if (Math.round(month) !== targetMonth) return;
+
+      // 案件番号
+      let note = '';
+      if (rawNote != null) {
+        const s = String(rawNote).trim();
+        const n = Number(s);
+        note = (!isNaN(n) && Number.isFinite(n)) ? (NOTE_MAP[Math.round(n)] || s) : s;
+      }
+
+      const bizName = KESSAN_BIZ[bizId] || bizId;
+      const dayStr   = day ? `${targetMonth}/${Math.round(day)} ` : '';
+      const memoStr  = memo ? `（${memo}）` : '';
+      const labelStr = `${dayStr}${bizName}${memoStr}`;
+
+      entries.push({
+        id: Date.now() + entries.length,
+        label: labelStr,
+        amount: String(Math.round(profit)),
+        acc: 'taiki-rakuten',
+        _kessan: true,
+      });
+    });
+
+    if (entries.length === 0) {
+      showSyncToast(`📋 ${monthLabel}の粗利データが見つかりませんでした`, true);
+      return;
+    }
+
+    // 対象月の粗利エントリのみ削除して上書き（他の月は残す）
+    pushDepositHistory();
+    deposits = deposits.filter(d => !d._kessan || labelMonth(d.label) !== targetMonth);
+    deposits.push(...entries);
+
+    deposits.sort(compareDepositsByLabelDate);
+
+    save();
+    renderDeposits();
+    calcSummary();
+    showSyncToast(`✅ ${monthLabel}の粗利 ${entries.length}件を反映しました`);
+  } catch(e) {
+    console.warn('[決算管理同期エラー]', e);
+    showSyncToast('❌ ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+    label.textContent = '決算管理から粗利を取得';
+  }
+}
+
+// ================================================================
+// 初期化
+// ================================================================
+
+const now = new Date();
+document.getElementById('currentDate').textContent =
+  `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日（${'日月火水木金土'[now.getDay()]}）`;
+
+load();
+renderAccountCards();
+renderCreditCards();
+renderTimeline();
+renderFixed();
+renderDeposits();
+renderSuddenExpenses();
+calcSummary();
+</script>
+</body>
+</html>
