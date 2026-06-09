@@ -50,15 +50,32 @@
       <h1 class="text-lg font-bold tracking-tight text-gray-900">支払い管理</h1>
       <p class="text-gray-400 text-xs mt-0.5" id="currentDate"></p>
     </div>
-    <button onclick="syncZaim()"
-      id="sync-btn"
-      class="flex items-center gap-1.5 text-xs font-medium bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl px-4 py-2 transition shadow-sm flex-shrink-0">
-      <svg id="sync-icon" class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-      </svg>
-      <span id="sync-label">Zaimと同期</span>
-    </button>
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <button onclick="exportData()" title="データをエクスポート"
+        class="flex items-center gap-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl px-3 py-2 transition">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+        </svg>
+        <span class="hidden sm:inline">書き出し</span>
+      </button>
+      <label title="データをインポート"
+        class="flex items-center gap-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl px-3 py-2 transition cursor-pointer">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12"/>
+        </svg>
+        <span class="hidden sm:inline">読み込み</span>
+        <input type="file" accept=".json" class="hidden" onchange="importData(event)">
+      </label>
+      <button onclick="syncZaim()"
+        id="sync-btn"
+        class="flex items-center gap-1.5 text-xs font-medium bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl px-4 py-2 transition shadow-sm">
+        <svg id="sync-icon" class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        <span id="sync-label">Zaimと同期</span>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -457,6 +474,41 @@ function load() {
   } catch(e) {
     console.warn('[支払い管理] localStorageの読み込みに失敗しました:', e);
   }
+}
+
+// ================================================================
+// エクスポート / インポート
+// ================================================================
+
+function exportData() {
+  const data = localStorage.getItem('shiharai-v4');
+  if (!data) { alert('保存データがありません。'); return; }
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const date = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `shiharai-${date}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      JSON.parse(e.target.result); // バリデーション
+      localStorage.setItem('shiharai-v4', e.target.result);
+      alert('データを読み込みました。ページを更新します。');
+      location.reload();
+    } catch {
+      alert('ファイルが正しくありません。');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
 }
 
 // ================================================================
