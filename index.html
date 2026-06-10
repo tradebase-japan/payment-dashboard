@@ -381,6 +381,8 @@ let suddenExpenses = [];
 
 // ユーザーが明示的に削除したプリセットIDのセット（再マージ防止）
 let deletedPresetIds = new Set();
+let dedChecked = {};   // {id: true} で確認済み管理
+let ccChecked  = {};   // {ccId: true}
 
 // コードで追加したプリセット入金（IDで重複チェックしてマージ）
 const PRESET_DEPOSITS = [
@@ -457,6 +459,8 @@ function save() {
       suddenExpenses,
       deletedPresetIds: [...deletedPresetIds],
       ccData: CREDIT_CARDS.map(c => ({ id:c.id, items:c.items, acc:c.acc })),
+      dedChecked,
+      ccChecked,
     }));
     showSaveToast();
     _debouncedGhSave();
@@ -497,6 +501,8 @@ function load() {
       });
     }
     if (saved.suddenExpenses) suddenExpenses = saved.suddenExpenses;
+    if (saved.dedChecked) dedChecked = saved.dedChecked;
+    if (saved.ccChecked)  ccChecked  = saved.ccChecked;
     if (saved.ccData) saved.ccData.forEach(s => {
       const card = CREDIT_CARDS.find(c => c.id === s.id);
       if (!card) return;
@@ -1088,28 +1094,37 @@ function renderTimeline() {
   el.innerHTML = '';
 
   buildTimelineEntries().forEach(item => {
-    const isCredit = item._type === 'credit';
-    const catStyle = isCredit ? null : (CAT[item.cat] || CAT.other);
+    const isCredit  = item._type === 'credit';
+    const catStyle  = isCredit ? null : (CAT[item.cat] || CAT.other);
     const cardTheme = isCredit ? item._ccTheme : null;
     const dayLabel  = item.label ?? `${item.day}日`;
     const isPast    = item.day !== null && item.day < todayDay;
     const isToday   = item.day === todayDay;
     const idx       = item._origIdx;
 
+    const checkKey  = isCredit ? item._ccId : item.id;
+    const isChecked = isCredit ? !!ccChecked[checkKey] : !!dedChecked[checkKey];
+    const toggleFn  = isCredit
+      ? `toggleCCChecked('${checkKey}')`
+      : `toggleDedChecked('${checkKey}')`;
+
     const row = document.createElement('div');
     row.className = [
       'relative flex items-center gap-2.5 py-2.5 pl-3 pr-3 rounded-xl transition-colors',
-      isToday ? 'bg-yellow-50 border border-yellow-300' : 'hover:bg-gray-50',
-      isPast  ? 'opacity-40' : '',
+      isChecked ? 'bg-emerald-50 border border-emerald-200' :
+        isToday ? 'bg-yellow-50 border border-yellow-300' : 'hover:bg-gray-50',
+      (isPast && !isChecked) ? 'opacity-40' : '',
     ].join(' ');
 
-    const dayClass = isToday
-      ? 'bg-yellow-400 text-white'
-      : isCredit
-        ? `${cardTheme.bg} ${cardTheme.text} border ${cardTheme.border}`
-        : `${catStyle.bg} ${catStyle.text} border ${catStyle.border}`;
+    const dayClass = isChecked ? 'bg-emerald-400 text-white' :
+      isToday
+        ? 'bg-yellow-400 text-white'
+        : isCredit
+          ? `${cardTheme.bg} ${cardTheme.text} border ${cardTheme.border}`
+          : `${catStyle.bg} ${catStyle.text} border ${catStyle.border}`;
 
-    const nameColor   = isCredit ? cardTheme.text : 'text-gray-900';
+    const nameColor   = isChecked ? 'text-gray-400 line-through' :
+      isCredit ? cardTheme.text : 'text-gray-900';
     const amountColor = isCredit ? cardTheme.text : (catStyle ? catStyle.text : 'text-gray-700');
 
     const tagHTML = isCredit
@@ -1130,6 +1145,14 @@ function renderTimeline() {
              oninput="setDedAmount(${idx}, numInput(this))" />
          </div>`;
 
+    const checkboxHTML = `
+      <label class="flex items-center cursor-pointer flex-shrink-0 ml-1" title="${isChecked ? '確認済み（タップで取消）' : '引き落とし確認'}">
+        <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="${toggleFn}" class="sr-only" />
+        <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isChecked ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 hover:border-emerald-400'}">
+          ${isChecked ? '<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+        </div>
+      </label>`;
+
     row.innerHTML = `
       <div class="relative z-10 w-[3.8rem] flex-shrink-0 text-center">
         <span class="block text-xs font-bold px-1 py-1 rounded-lg ${dayClass}">${esc(dayLabel)}</span>
@@ -1138,15 +1161,28 @@ function renderTimeline() {
         <div class="flex items-center gap-1.5 flex-wrap">
           <span class="text-sm font-medium ${nameColor}">${esc(item.name)}</span>
           ${tagHTML}
-          ${isToday ? '<span class="text-xs text-yellow-600 font-bold animate-pulse">TODAY</span>' : ''}
-          ${isPast  ? '<span class="text-xs text-gray-300">済</span>' : ''}
+          ${isChecked ? '<span class="text-xs text-emerald-600 font-bold">確認済み ✓</span>' :
+            isToday ? '<span class="text-xs text-yellow-600 font-bold animate-pulse">TODAY</span>' :
+            isPast  ? '<span class="text-xs text-gray-300">済</span>' : ''}
         </div>
         <div class="mt-1">${accPart}</div>
       </div>
       ${amountPart}
+      ${checkboxHTML}
     `;
     el.appendChild(row);
   });
+}
+
+function toggleDedChecked(id) {
+  if (dedChecked[id]) delete dedChecked[id];
+  else dedChecked[id] = true;
+  save(); renderTimeline();
+}
+function toggleCCChecked(id) {
+  if (ccChecked[id]) delete ccChecked[id];
+  else ccChecked[id] = true;
+  save(); renderTimeline();
 }
 
 function setDedAmount(idx, val) {
