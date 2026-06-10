@@ -1355,7 +1355,7 @@ function removeDeposit(id) {
   deposits = deposits.filter(d => String(d.id) !== String(id));
   // プリセットIDなら削除済みとして記録（再マージ防止）
   const sid = String(id);
-  if (sid.startsWith('buy-') || sid.startsWith('kessan-') || sid.startsWith('jido-')) {
+  if (sid.startsWith('buy-') || sid.startsWith('kessan-') || sid.startsWith('jido-') || sid.startsWith('sbi-recv-')) {
     deletedPresetIds.add(sid);
   }
   save(); renderDeposits();
