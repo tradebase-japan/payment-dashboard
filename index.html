@@ -731,7 +731,7 @@ function ccTotalForAccount(accId) {
 function ccOutForMonthEnd(accId) {
   const today = new Date().getDate();
   return CREDIT_CARDS
-    .filter(c => c.acc === accId && c.billingDay >= today)
+    .filter(c => c.acc === accId && c.billingDay >= today && !ccChecked[c.id])
     .reduce((sum, c) => sum + c.items.reduce((s, item) => s + (item.amount || 0), 0), 0);
 }
 
@@ -752,10 +752,11 @@ function renderAccountCards() {
       const ccOut  = ccOutForMonthEnd(acc.id);
       const today2 = new Date().getDate();
 
-      // 引き落としスケジュール：今日以降（day===null は月末扱いで含める）
+      // 引き落としスケジュール：今日以降かつ未確認のみ（day===null は月末扱いで含める）
       const dedItems = deductions
         .filter(d => d.acc === acc.id && d.amount)
-        .filter(d => d.day === null || d.day >= today2);
+        .filter(d => d.day === null || d.day >= today2)
+        .filter(d => !dedChecked[d.id]);
       const dedOut = dedItems.reduce((s, d) => s + (d.amount || 0), 0);
 
       // 当月末までの未入金の入金予定（日付なし含む）
@@ -781,9 +782,9 @@ function renderAccountCards() {
         </div>`
       ).join('');
 
-      // カード引き落としの内訳（引落日が今日以降のカードのみ）
+      // カード引き落としの内訳（引落日が今日以降・未確認のカードのみ）
       const today = new Date().getDate();
-      const ccItems = CREDIT_CARDS.filter(c => c.acc === acc.id && c.billingDay >= today && ccTotal(c) > 0);
+      const ccItems = CREDIT_CARDS.filter(c => c.acc === acc.id && c.billingDay >= today && ccTotal(c) > 0 && !ccChecked[c.id]);
       const ccDetailHTML = ccItems.map(c =>
         `<div class="flex justify-between text-xs text-gray-400 pl-3 py-0.5">
           <span>${esc(c.name)}<span class="text-gray-300 ml-1">${c.billingDay}日引落</span></span>
