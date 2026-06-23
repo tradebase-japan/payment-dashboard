@@ -1676,12 +1676,10 @@ async function syncKessan() {
     const rows = data.table.rows;
     const get  = (row, i) => (row.c[i] && row.c[i].v != null) ? row.c[i].v : null;
 
-    // 翌月（今が4月なら5月）を対象
-    const now         = new Date();
-    const targetMonth = now.getMonth() + 1; // 当月（1〜12）
-    const monthLabel  = `${targetMonth}月`;
+    const now          = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const today        = now.getDate();
 
-    // 翌月の全件を1行ずつ取得
     const NOTE_MAP = { 1:'①', 2:'②', 3:'③', 4:'④', 5:'⑤', 6:'⑥', 7:'⑦', 8:'⑧', 9:'⑨' };
     const entries = [];
     rows.forEach(row => {
@@ -1692,7 +1690,14 @@ async function syncKessan() {
       const rawNote = get(row, 6);
       const memo   = get(row, 7);
       if (!bizId || month == null || !profit) return;
-      if (Math.round(month) !== targetMonth) return;
+
+      const monthNum = Math.round(month);
+      const dayNum   = day != null ? Math.round(day) : null;
+
+      // 過去月は除外
+      if (monthNum < currentMonth) return;
+      // 当月は今日以降のみ（今日より前は除外）
+      if (monthNum === currentMonth && (dayNum == null || dayNum < today)) return;
 
       // 案件番号
       let note = '';
@@ -1703,7 +1708,7 @@ async function syncKessan() {
       }
 
       const bizName = KESSAN_BIZ[bizId] || bizId;
-      const dayStr   = day ? `${targetMonth}/${Math.round(day)} ` : '';
+      const dayStr   = dayNum ? `${monthNum}/${dayNum} ` : '';
       const memoStr  = memo ? `（${memo}）` : '';
       const labelStr = `${dayStr}${bizName}${memoStr}`;
 
@@ -1717,13 +1722,17 @@ async function syncKessan() {
     });
 
     if (entries.length === 0) {
-      showSyncToast(`📋 ${monthLabel}の粗利データが見つかりませんでした`, true);
+      showSyncToast('📋 反映対象の粗利データが見つかりませんでした', true);
       return;
     }
 
-    // 対象月の粗利エントリのみ削除して上書き（他の月は残す）
+    // 当月・翌月以降の粗利エントリを上書き（過去月の _kessan は残す）
     pushDepositHistory();
-    deposits = deposits.filter(d => !d._kessan || labelMonth(d.label) !== targetMonth);
+    deposits = deposits.filter(d => {
+      if (!d._kessan) return true;
+      const mo = labelMonth(d.label);
+      return mo === null || mo < currentMonth;
+    });
     deposits.push(...entries);
 
     deposits.sort(compareDepositsByLabelDate);
@@ -1731,7 +1740,7 @@ async function syncKessan() {
     save();
     renderDeposits();
     calcSummary();
-    showSyncToast(`✅ ${monthLabel}の粗利 ${entries.length}件を反映しました`);
+    showSyncToast(`✅ 粗利 ${entries.length}件を反映しました（当月は今日以降・翌月以降含む）`);
   } catch(e) {
     console.warn('[決算管理同期エラー]', e);
     showSyncToast('❌ ' + e.message, true);
