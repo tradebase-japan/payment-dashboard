@@ -402,11 +402,12 @@ const PRESET_DEPOSITS = [
   { id:'kessan-0530-trading', label:'5/30 既存事業（商社・卸売）⑥ 繰越', amount:'600000', acc:'taiki-rakuten' },
 ];
 
-// 毎月：SBIから銚子信金（個人）への自動振込受取
+// 毎月：SBI自動振込の入金予定
 {
   const _m = new Date().getMonth() + 1;
   PRESET_DEPOSITS.push({ id:'sbi-recv-choushi-p', label:`${_m}/25 SBI自動振込`, amount:'62899', acc:'taiki-choushi-p' });
   PRESET_DEPOSITS.push({ id:'sbi-recv-choushi-b', label:`${_m}/9 SBI自動振込（融資返済）`, amount:'136000', acc:'taiki-choushi-b' });
+  PRESET_DEPOSITS.push({ id:'sbi-recv-taiki-sbi', label:`${_m}/3 定額自動入金`, amount:'210000', acc:'taiki-sbi' });
 }
 
 // 偶数月のみ：児童手当（子2人・10日支給）
